@@ -1,0 +1,11 @@
+{
+  "name": "@prism/contracts",
+  "private": true,
+  "scripts": {
+    "compile": "hardhat compile",
+    "node": "hardhat node --hostname 127.0.0.1 --port 8545"
+  },
+  "devDependencies": {
+    "hardhat": "2.29.1"
+  }
+}

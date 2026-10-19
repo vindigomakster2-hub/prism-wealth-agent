@@ -1,0 +1,23 @@
+{
+  "name": "prism-wealth",
+  "private": true,
+  "description": "Prism: hybrid TradFi-to-DeFi wealth agent. Off-chain assets as attested collateral for on-chain credit, run by an autonomous wallet with bounded authority.",
+  "workspaces": [
+    "contracts",
+    "server",
+    "web"
+  ],
+  "scripts": {
+    "compile": "npm run compile -w contracts",
+    "chain": "npm run node -w contracts",
+    "server": "npm run dev -w server",
+    "web": "npm run dev -w web",
+    "predev": "npm run compile",
+    "dev": "concurrently -k -n chain,server,web -c gray,yellow,magenta \"npm:chain\" \"npm:server\" \"npm:web\"",
+    "test:e2e": "npm run e2e -w server",
+    "typecheck": "npm run typecheck -w server && npm run typecheck -w web"
+  },
+  "devDependencies": {
+    "concurrently": "10.0.6"
+  }
+}

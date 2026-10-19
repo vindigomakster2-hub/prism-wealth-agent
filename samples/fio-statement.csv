@@ -1,0 +1,10 @@
+ID operace;Datum;Objem;Měna;Protiúčet;Název protiúčtu;Kód banky;Zpráva pro příjemce;Poznámka;Typ
+26871234501;18.10.2026;-1234,50;CZK;;;;;Albert Hypermarket Praha;Platba kartou
+26871234502;17.10.2026;-189,00;CZK;;;;;Bolt Rides;Platba kartou
+26871234503;16.10.2026;-2399,00;CZK;;;;;Alza.cz;Platba kartou
+26871234504;15.10.2026;-640,00;CZK;;;;;Restaurace U Fleku;Platba kartou
+26871234505;14.10.2026;-3000,00;CZK;123456789;Petr Novak;0800;Splatka pujcky;Převod - Petr Novak;Bezhotovostní platba
+26871234506;12.10.2026;-899,00;CZK;;;;;Rohlik.cz;Platba kartou
+26871234507;11.10.2026;-412,00;CZK;;;;;Lekarna Dr.Max;Platba kartou
+26871234508;10.10.2026;-599,00;CZK;;;;;O2 Czech Republic;Inkaso
+26871234509;05.10.2026;52000,00;CZK;987654321;Lumen Software s.r.o.;2010;Mzda 10/2026;Mzda;Bezhotovostní příjem
