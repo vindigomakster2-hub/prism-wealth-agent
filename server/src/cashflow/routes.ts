@@ -5,7 +5,7 @@ import type { Express, NextFunction, Request, Response } from "express";
 import { logEvent } from "../store.js";
 import { addAsset, addDebt, answer, cashState, commitCsv, confirmReceipt, previewCsv, setBudgets, syncNow } from "./engine.js";
 import { createLink, fetchRequisition, gocardlessConfigured, listInstitutions } from "./gocardless.js";
-import { sampleReceipt, scanWithClaude } from "./receipts.js";
+import { sampleReceipt, scanWithVision } from "./receipts.js";
 import { cash } from "./state.js";
 import { ingest } from "./engine.js";
 
@@ -71,7 +71,7 @@ export function registerCashRoutes(app: Express, wrap: Wrap) {
       const { sample, imageBase64, mediaType } = req.body ?? {};
       if (sample === 1 || sample === 2) return sampleReceipt(sample);
       if (typeof imageBase64 !== "string" || !imageBase64) throw bad("imageBase64 or sample is required");
-      return scanWithClaude(imageBase64.replace(/^data:[^,]+,/, ""), String(mediaType ?? "image/jpeg"));
+      return scanWithVision(imageBase64.replace(/^data:[^,]+,/, ""), String(mediaType ?? "image/jpeg"));
     }),
   );
   app.post(

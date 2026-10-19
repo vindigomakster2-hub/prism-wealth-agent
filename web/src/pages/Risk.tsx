@@ -3,38 +3,24 @@ import { CircleCheck, ShieldCheck, TriangleAlert, Zap } from "lucide-react";
 import { useApp } from "../App";
 import { api, type StressInput, type StressResult } from "../api";
 import { BarRow, Donut, Gauge } from "../components/charts";
+import { EMPTY_STRESS, StressBuilder, StressResultView } from "../components/Stress";
 import { StatusPill } from "../components/ui";
-import { hf, pct, usd, usdCompact } from "../format";
+import { pct, usd, usdCompact } from "../format";
 
-const GROUP_COLOR: Record<string, string> = {
+export const GROUP_COLOR: Record<string, string> = {
   "Cash & deposits": "#3987e5",
   "Public equities": "#d95926",
   "Bonds & T-bills": "#199e70",
   "Private & venture": "#c98500",
   Crypto: "#d55181",
+  "Real assets & other": "#efe6d2",
 };
-
-const SECTOR_LABEL: Record<string, string> = {
-  tech: "Technology",
-  crypto: "Crypto",
-  broad_market: "Broad market",
-  rates: "Rates & T-bills",
-  consumer: "Consumer",
-  credit: "Private credit",
-  cash: "Cash",
-};
-
-const SLIDERS: Array<{ key: keyof StressInput; label: string; min: number; max: number }> = [
-  { key: "equitiesPct", label: "Public equities (tech moves 1.25×)", min: -60, max: 30 },
-  { key: "cryptoPct", label: "ETH", min: -80, max: 50 },
-  { key: "privatePct", label: "Private & venture marks", min: -80, max: 30 },
-  { key: "eurUsdPct", label: "EUR vs USD", min: -25, max: 25 },
-];
 
 export function Risk() {
   const { s, run, go } = useApp();
   const r = s.risk;
-  const [stress, setStress] = useState<StressInput>({ equitiesPct: -25, cryptoPct: -40, privatePct: -30, eurUsdPct: -5 });
+  const x = r.exposure;
+  const [stress, setStress] = useState<StressInput>({ ...EMPTY_STRESS, equitiesPct: -25, cryptoPct: -40, privatePct: -30, eurUsdPct: -5 });
   const [result, setResult] = useState<StressResult | null>(null);
 
   useEffect(() => {
@@ -42,18 +28,19 @@ export function Risk() {
       api.stress(stress).then(setResult).catch(() => undefined);
     }, 180);
     return () => clearTimeout(t);
-  }, [stress, s.chain.ethPrice, s.chain.loan.debt]);
+  }, [stress, s.chain.ethPrice, s.chain.loan.debt, r.totals.netWorth]);
 
   const scoreColor = r.riskScore < 30 ? "#4cc38a" : r.riskScore < 50 ? "#e3f56b" : r.riskScore < 70 ? "#f5c451" : "#ff6b6b";
   const maxLadder = Math.max(...r.liquidityLadder.map((l) => l.value));
-  const maxSector = Math.max(...r.sectorExposure.map((x) => x.value));
+  const maxSector = Math.max(1, ...x.sectors.map((v) => v.value));
+  const maxRegion = Math.max(1, ...x.regions.map((v) => v.value));
 
   return (
     <div className="stack">
       <div className="grid g-3">
         <div className="card">
           <h3 className="card-title">Risk score</h3>
-          <div className="card-sub">0 is calm, 100 is fragile. Covers on-chain and off-chain together. Each bar shows a factor score and its weight.</div>
+          <div className="card-sub">0 is calm, 100 is fragile. Each bar shows a factor score and its weight.</div>
           <div style={{ marginTop: 18 }}>
             <Gauge value={r.riskScore} min={0} max={100} color={scoreColor} size={250}>
               <div className="big-num" style={{ fontSize: 40 }}>{r.riskScore}</div>
@@ -69,10 +56,10 @@ export function Risk() {
 
         <div className="card">
           <h3 className="card-title">Allocation</h3>
-          <div className="card-sub">Across {s.sources.filter((x) => x.connected).length} institutions and the on-chain wallet</div>
+          <div className="card-sub">Share of gross assets ({usdCompact(r.totals.assets)}) by asset group</div>
           <div style={{ display: "flex", gap: 18, alignItems: "center", marginTop: 18, flexWrap: "wrap", justifyContent: "center" }}>
             <Donut
-              slices={r.allocation.map((a) => ({ label: a.group, value: a.value, color: GROUP_COLOR[a.group] }))}
+              slices={r.allocation.map((a) => ({ label: a.group, value: a.value, color: GROUP_COLOR[a.group] ?? "#a9a2a7" }))}
               center={
                 <div>
                   <div className="big-num" style={{ fontSize: 22 }}>{usdCompact(r.totals.assets)}</div>
@@ -84,10 +71,10 @@ export function Risk() {
               {r.allocation.map((a) => (
                 <div key={a.group} className="between" style={{ fontSize: 13 }}>
                   <span style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                    <span className="swatch" style={{ background: GROUP_COLOR[a.group] }} />
+                    <span className="swatch" style={{ background: GROUP_COLOR[a.group] ?? "#a9a2a7" }} />
                     {a.group}
                   </span>
-                  <span className="num ink2">{pct(a.pct)} · {usdCompact(a.value)}</span>
+                  <span className="num ink2">{pct(a.pct, 1)} · {usdCompact(a.value)}</span>
                 </div>
               ))}
             </div>
@@ -140,9 +127,7 @@ export function Risk() {
                   </div>
                 </div>
                 {f.action ? (
-                  <button className="btn lime sm" onClick={() => run(f.action!, f.detail)}>
-                    {f.actionLabel}
-                  </button>
+                  <button className="btn lime sm" onClick={() => run(f.action!, f.detail)}>{f.actionLabel}</button>
                 ) : f.owner === "agent" ? (
                   <button className="btn sm" onClick={() => go("agent")}>Agent settings</button>
                 ) : (
@@ -155,68 +140,85 @@ export function Risk() {
 
         <div className="card">
           <h3 className="card-title">Stress test</h3>
-          <div className="card-sub">Drag a shock and see net worth and loan health respond</div>
-          <div className="stack-sm" style={{ marginTop: 16 }}>
-            {SLIDERS.map((sl) => (
-              <label key={sl.key} className="field">
-                <span className="between">
-                  <span>{sl.label}</span>
-                  <b className="num" style={{ color: stress[sl.key] < 0 ? "#ffbcbc" : "#a6e8c6" }}>
-                    {stress[sl.key] > 0 ? "+" : ""}
-                    {stress[sl.key]}%
-                  </b>
-                </span>
-                <input type="range" min={sl.min} max={sl.max} step={1} value={stress[sl.key]} onChange={(e) => setStress({ ...stress, [sl.key]: Number(e.target.value) })} />
-              </label>
-            ))}
+          <div className="card-sub">Start from a scenario, move the sliders, or add your own parameters</div>
+          <div style={{ marginTop: 14 }}>
+            <StressBuilder value={stress} onChange={setStress} />
           </div>
           {result && (
             <>
               <div className="divider" />
-              <div className="between">
-                <div>
-                  <div className="muted" style={{ fontSize: 12 }}>Net worth after shock</div>
-                  <div className="big-num" style={{ fontSize: 30 }}>{usd(result.after)}</div>
-                </div>
-                <StatusPill tone={result.deltaPct > -10 ? "good" : result.deltaPct > -20 ? "warn" : "bad"}>
-                  {result.deltaPct.toFixed(1)}% · {usdCompact(result.delta)}
-                </StatusPill>
-              </div>
-              <div className="stack-sm" style={{ marginTop: 14 }}>
-                {result.byGroup
-                  .filter((g) => Math.abs(g.delta) > 1)
-                  .map((g) => (
-                    <BarRow
-                      key={g.group}
-                      label={
-                        <span className="ink2" style={{ display: "flex", gap: 8, alignItems: "center" }}>
-                          <span className="swatch" style={{ background: GROUP_COLOR[g.group] }} />
-                          {g.group}
-                        </span>
-                      }
-                      value={Math.abs(g.delta)}
-                      max={Math.max(...result.byGroup.map((x) => Math.abs(x.delta)))}
-                      color={g.delta < 0 ? "#ff6b6b" : "#4cc38a"}
-                      display={usdCompact(g.delta)}
-                    />
-                  ))}
-              </div>
-              <div className="vs" style={{ marginTop: 14 }}>
-                <div>
-                  <div className="muted" style={{ fontSize: 12 }}>Your loan health</div>
-                  <div className="big-num" style={{ fontSize: 24, color: result.liquidation ? "#ff6b6b" : "#e3f56b" }}>
-                    {hf(result.hfBefore)} → {hf(result.hfAfter)}
-                  </div>
-                  <div className="muted" style={{ fontSize: 12 }}>{result.liquidation ? "Rescue playbook would fire first" : "Stays above liquidation"}</div>
-                </div>
-                <div>
-                  <div className="muted" style={{ fontSize: 12 }}>Passive twin, no agent</div>
-                  <div className="big-num" style={{ fontSize: 24, color: (result.twinHfAfter ?? 9) < 1 ? "#ff6b6b" : "#efe6d2" }}>{hf(result.twinHfAfter)}</div>
-                  <div className="muted" style={{ fontSize: 12 }}>ETH at {usd(result.ethPriceAfter)}</div>
-                </div>
-              </div>
+              <StressResultView r={result} />
             </>
           )}
+        </div>
+      </div>
+
+      <div className="grid g-3">
+        <div className="card">
+          <h3 className="card-title">Sector exposure</h3>
+          <div className="card-sub">
+            Look-through: funds count by their index weights. Shares of gross assets, so they add up to 100%. Tech + crypto: {pct(x.riskOnPct, 1)}
+          </div>
+          <div className="stack-sm" style={{ marginTop: 16 }}>
+            {x.sectors.map((v) => (
+              <BarRow key={v.key} label={<span className="ink2">{v.label}</span>} value={v.value} max={maxSector} color={v.key === "technology" || v.key === "crypto" ? "#ff9a52" : "#efe6d2"} display={pct(v.pct, 1)} />
+            ))}
+          </div>
+          {x.lookThrough.length > 0 && (
+            <p className="muted" style={{ fontSize: 11.5, marginBottom: 0 }}>
+              Broken down: {x.lookThrough.map((l) => `${l.name} (${l.index})`).join(", ")}. Weights are rounded index factsheet values.
+            </p>
+          )}
+        </div>
+        <div className="card">
+          <h3 className="card-title">Regions</h3>
+          <div className="card-sub">Where the underlying businesses and deposits sit (look-through)</div>
+          <div className="stack-sm" style={{ marginTop: 16 }}>
+            {x.regions.map((v) => (
+              <BarRow key={v.key} label={<span className="ink2">{v.label}</span>} value={v.value} max={maxRegion} color="#3987e5" display={pct(v.pct, 1)} />
+            ))}
+          </div>
+          <div className="divider" />
+          <div className="muted" style={{ fontSize: 12, marginBottom: 8 }}>Currencies</div>
+          <div className="stack-sm">
+            {r.currencies.map((c) => (
+              <BarRow key={c.ccy} label={<span className="ink2">{c.ccy}</span>} value={c.pct} max={100} color="#efe6d2" display={pct(c.pct, 1)} />
+            ))}
+          </div>
+        </div>
+        <div className="card">
+          <h3 className="card-title">Concentration</h3>
+          <div className="card-sub">How many bets you really hold</div>
+          <div className="kpi-grid">
+            <div className="kpi-tile">
+              <div className="kt-top"><span className="num">{x.concentration.effectivePositions.toFixed(1)}</span></div>
+              <div className="kt-label">Effective positions (of {x.concentration.positions})</div>
+            </div>
+            <div className="kpi-tile">
+              <div className="kt-top"><span className="num">{pct(x.concentration.top5Pct)}</span></div>
+              <div className="kt-label">In the 5 largest</div>
+            </div>
+          </div>
+          <table className="t" style={{ marginTop: 10 }}>
+            <tbody>
+              {x.top.slice(0, 6).map((h) => (
+                <tr key={h.id}>
+                  <td>{h.name}</td>
+                  <td className="r muted" title="Share of gross assets">{pct(h.pct, 1)}</td>
+                  <td className="r">{usdCompact(h.value)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          <div className="divider" />
+          <div className="stack-sm" style={{ fontSize: 13 }}>
+            {r.depositGuarantee.map((d) => (
+              <div key={d.bank} className="between">
+                <span>{d.bank}</span>
+                {d.excess > 0 ? <StatusPill tone="warn">{usdCompact(d.excess)} above guarantee</StatusPill> : <StatusPill tone="good">Fully guaranteed</StatusPill>}
+              </div>
+            ))}
+          </div>
         </div>
       </div>
 
@@ -224,18 +226,11 @@ export function Risk() {
         <div className="card">
           <h3 className="card-title">Capital by risk level</h3>
           <div className="card-sub">
-            Alert above {s.mandate.alerts.maxCapitalAtRiskPct}% in high-risk assets (set on the Agent page). Now: {Math.round(r.capitalAtRiskPct)}%
+            Alert above {s.mandate.alerts.maxCapitalAtRiskPct}% in high-risk assets (Agent → Mandate). Now: {pct(r.capitalAtRiskPct, 1)}
           </div>
           <div className="stack-sm" style={{ marginTop: 16 }}>
-            {r.byRisk.map((x) => (
-              <BarRow
-                key={x.level}
-                label={<span className="ink2" style={{ textTransform: "capitalize" }}>{x.level} risk</span>}
-                value={x.value}
-                max={r.totals.assets}
-                color={x.level === "high" ? "#ff6b6b" : x.level === "medium" ? "#f5c451" : "#4cc38a"}
-                display={`${pct(x.pct)} · ${usdCompact(x.value)}`}
-              />
+            {r.byRisk.map((v) => (
+              <BarRow key={v.level} label={<span className="ink2" style={{ textTransform: "capitalize" }}>{v.level} risk</span>} value={v.value} max={r.totals.assets} color={v.level === "high" ? "#ff6b6b" : v.level === "medium" ? "#f5c451" : "#4cc38a"} display={`${pct(v.pct)} · ${usdCompact(v.value)}`} />
             ))}
           </div>
           <p className="muted" style={{ fontSize: 12, marginBottom: 0 }}>Low: cash, deposits, T-bills, bonds. Medium: ETFs, P2P loans, real assets. High: single stocks, crypto, private stakes.</p>
@@ -247,9 +242,11 @@ export function Risk() {
             <tbody>
               {r.byBehavior.map((b) => (
                 <tr key={b.behavior}>
-                  <td style={{ textTransform: "capitalize" }}>{b.behavior === "drain" ? "Debts (drain)" : b.behavior === "income" ? "Pays income" : "Neutral"}</td>
+                  <td>{b.behavior === "drain" ? "Debts (drain)" : b.behavior === "income" ? "Pays income" : "Neutral"}</td>
                   <td className="r">{usdCompact(b.value)}</td>
-                  <td className="r" style={{ color: b.annualUsd > 0 ? "#a6e8c6" : b.annualUsd < 0 ? "#ffbcbc" : undefined }}>{b.annualUsd === 0 ? "–" : `${b.annualUsd > 0 ? "+" : "−"}${usd(Math.abs(b.annualUsd))}/yr`}</td>
+                  <td className="r" style={{ color: b.annualUsd > 0 ? "#a6e8c6" : b.annualUsd < 0 ? "#ffbcbc" : undefined }}>
+                    {b.annualUsd === 0 ? "–" : `${b.annualUsd > 0 ? "+" : "−"}${usd(Math.abs(b.annualUsd))}/yr`}
+                  </td>
                 </tr>
               ))}
             </tbody>
@@ -257,60 +254,6 @@ export function Risk() {
           <div className="between" style={{ marginTop: 12 }}>
             <span className="muted" style={{ fontSize: 12.5 }}>Passive income − interest − premiums</span>
             <StatusPill tone={r.cashflow.netUsd >= 0 ? "good" : "warn"}>{r.cashflow.netUsd >= 0 ? "+" : "−"}{usd(Math.abs(r.cashflow.netUsd))}/yr</StatusPill>
-          </div>
-        </div>
-      </div>
-
-      <div className="grid g-3">
-        <div className="card">
-          <h3 className="card-title">Sector exposure</h3>
-          <div className="card-sub">{Math.round(r.riskOnPct)}% of net worth sits in tech and crypto, which tend to fall together</div>
-          <div className="stack-sm" style={{ marginTop: 16 }}>
-            {r.sectorExposure
-              .slice()
-              .sort((a, b) => b.value - a.value)
-              .map((x) => (
-                <BarRow key={x.sector} label={<span className="ink2">{SECTOR_LABEL[x.sector] ?? x.sector}</span>} value={x.value} max={maxSector} color={x.sector === "tech" || x.sector === "crypto" ? "#ff9a52" : "#efe6d2"} display={pct(x.pct)} />
-              ))}
-          </div>
-        </div>
-        <div className="card">
-          <h3 className="card-title">Largest positions</h3>
-          <div className="card-sub">Share of net worth</div>
-          <table className="t" style={{ marginTop: 10 }}>
-            <tbody>
-              {r.topHoldings.map((h) => (
-                <tr key={h.name}>
-                  <td>{h.name}</td>
-                  <td className="r muted">{pct(h.pct, 1)}</td>
-                  <td className="r">{usdCompact(h.value)}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-        <div className="card">
-          <h3 className="card-title">Custody & currency</h3>
-          <div className="card-sub">Deposit guarantees and FX exposure</div>
-          <div className="stack-sm" style={{ marginTop: 14, fontSize: 13 }}>
-            {r.depositGuarantee.map((d) => (
-              <div key={d.bank}>
-                <div className="between">
-                  <span>{d.bank}</span>
-                  {d.excess > 0 ? <StatusPill tone="warn">{usdCompact(d.excess)} unprotected</StatusPill> : <StatusPill tone="good">Fully covered</StatusPill>}
-                </div>
-                <div className="meter" style={{ marginTop: 6 }}>
-                  <i style={{ width: `${Math.min(100, (d.amount / d.limit) * 100)}%`, background: d.excess > 0 ? "#f5c451" : "#4cc38a" }} />
-                </div>
-                <div className="muted" style={{ fontSize: 12, marginTop: 4 }}>
-                  {usd(d.amount)} held, {usd(d.limit)} guaranteed
-                </div>
-              </div>
-            ))}
-            <div className="divider" style={{ margin: "6px 0" }} />
-            {r.currencies.map((c) => (
-              <BarRow key={c.ccy} label={<span className="ink2">{c.ccy}</span>} value={c.pct} max={100} color="#efe6d2" display={pct(c.pct)} />
-            ))}
           </div>
         </div>
       </div>

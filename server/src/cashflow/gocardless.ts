@@ -5,7 +5,7 @@ import type { RawTxn } from "./seed.js";
  * licensed AISP across the EEA (incl. Czech banks: ČSOB, KB, Fio, MONETA, Česká spořitelna).
  * Enabled when GOCARDLESS_SECRET_ID / GOCARDLESS_SECRET_KEY are set. Flow:
  *   institutions → requisition (user consents in the bank's UI) → accounts → transactions.
- * Read-only by construction; Prism never sees bank credentials. Some banks allow only ~4 calls
+ * Read-only by construction; Halo never sees bank credentials. Some banks allow only ~4 calls
  * per account per day, so sync on demand and cache.
  */
 
@@ -51,7 +51,7 @@ export function listInstitutions(country: string) {
 export async function createLink(institutionId: string, redirect: string) {
   const r = await gc<{ id: string; link: string; status: string }>("/requisitions/", {
     method: "POST",
-    body: { redirect, institution_id: institutionId, reference: `prism-${Date.now()}`, user_language: "EN" },
+    body: { redirect, institution_id: institutionId, reference: `halo-${Date.now()}`, user_language: "EN" },
   });
   requisitions.unshift({ id: r.id, institutionId, link: r.link, status: r.status, createdAt: Date.now(), accounts: [] });
   return r;

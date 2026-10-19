@@ -1,5 +1,5 @@
 {
-  "name": "@prism/contracts",
+  "name": "@halo/contracts",
   "private": true,
   "scripts": {
     "compile": "hardhat compile",

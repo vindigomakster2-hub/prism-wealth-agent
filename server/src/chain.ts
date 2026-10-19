@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import {
@@ -14,7 +15,7 @@ import {
 } from "ethers";
 import { ARTIFACTS_DIR, DEPLOYMENTS_FILE, ETH_START_PRICE, ROLE_INDEX, RPC_URL, TEST_MNEMONIC } from "./config.js";
 
-export const provider = new JsonRpcProvider(RPC_URL, { chainId: 31337, name: "prism-local" }, {
+export const provider = new JsonRpcProvider(RPC_URL, { chainId: 31337, name: "halo-local" }, {
   staticNetwork: true,
   cacheTimeout: -1,
 });
@@ -40,6 +41,12 @@ function artifact(name: string): Artifact {
     artifactCache.set(name, a);
   }
   return a;
+}
+
+const CONTRACTS = ["MockERC20", "PriceOracle", "CreditRegistry", "HybridLendingPool", "TBillVault", "CoverPool", "SimpleSwap", "AgentWallet"];
+/** Fingerprint of the compiled contracts, so a recompile forces a fresh deployment. */
+function artifactsHash(): string {
+  return createHash("sha1").update(CONTRACTS.map((n) => artifact(n).bytecode).join("|")).digest("hex");
 }
 
 export const iface = {
@@ -188,7 +195,7 @@ export async function deployWorld(): Promise<Addresses> {
   await send(as(c.pool, "twin").borrow(usd6(9000)));
   await send(as(c.usdc, "liquidator").approve(pool, MaxUint256));
 
-  fs.writeFileSync(DEPLOYMENTS_FILE, JSON.stringify(a, null, 2));
+  fs.writeFileSync(DEPLOYMENTS_FILE, JSON.stringify({ ...a, artifactsHash: artifactsHash() }, null, 2));
   return a;
 }
 
@@ -208,8 +215,9 @@ export async function waitForChain(maxSeconds = 90) {
 export async function ensureWorld(): Promise<{ reused: boolean }> {
   await waitForChain();
   if (fs.existsSync(DEPLOYMENTS_FILE)) {
-    const saved = JSON.parse(fs.readFileSync(DEPLOYMENTS_FILE, "utf8")) as Addresses;
-    if ((await provider.getCode(saved.wallet)) !== "0x") {
+    const saved = JSON.parse(fs.readFileSync(DEPLOYMENTS_FILE, "utf8")) as Addresses & { artifactsHash?: string };
+    // Reuse only if the chain still has the contracts AND they were built from the current sources.
+    if (saved.artifactsHash === artifactsHash() && (await provider.getCode(saved.wallet)) !== "0x") {
       bind(saved);
       return { reused: true };
     }

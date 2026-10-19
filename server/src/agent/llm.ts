@@ -1,5 +1,4 @@
-import Anthropic from "@anthropic-ai/sdk";
-import { LLM_MODEL } from "../config.js";
+import { chat, type ChatMessage, type ToolDef } from "./groq.js";
 import { stressTest } from "../engine/risk.js";
 import { persona } from "../data/persona.js";
 import { snapshotState } from "../state.js";
@@ -8,9 +7,7 @@ import { parseAction, propose } from "./pipeline.js";
 import type { Proposal } from "./types.js";
 import { cashState } from "../cashflow/engine.js";
 
-import { getClient } from "./claude.js";
-
-const SYSTEM = `You are Prism, the AI agent inside a hybrid TradFi-to-DeFi wealth app. You see the user's whole balance sheet: off-chain (bank accounts, a term deposit, a brokerage account, venture and crowdfunding holdings, insurance policies), all read-only, and on-chain (a smart-account wallet with a USDC loan against ETH collateral, a tokenized T-bill vault and liquidation cover).
+const SYSTEM = `You are Halo, the AI agent inside a hybrid TradFi-to-DeFi wealth app. You see the user's whole balance sheet: off-chain (bank accounts, a term deposit, a brokerage account, venture and crowdfunding holdings, insurance policies), all read-only, and on-chain (a smart-account wallet with a USDC loan against ETH collateral, a tokenized T-bill vault and liquidation cover).
 
 What you can do:
 - Read data with the get_* tools. Fetch fresh data before quoting numbers and never invent figures.
@@ -30,7 +27,7 @@ Style: concise and concrete. Use $ amounts with thousands separators and light m
 
 const NO_INPUT = { type: "object" as const, properties: {}, additionalProperties: false };
 
-const TOOLS: Anthropic.Beta.BetaTool[] = [
+const TOOLS: Array<{ name: string; description: string; input_schema: Record<string, unknown> }> = [
   { name: "get_overview", description: "Net worth, allocation, connected sources and on-chain summary.", input_schema: NO_INPUT },
   { name: "get_risk_report", description: "Risk score, findings (with who can fix each), liquidity ladder, concentration and passed checks.", input_schema: NO_INPUT },
   { name: "get_credit_profile", description: "Proof-of-Wealth score, tier, credit line, factor breakdown, standard vs hybrid loan terms and the on-chain attestation status.", input_schema: NO_INPUT },
@@ -218,52 +215,34 @@ async function runTool(name: string, input: unknown, proposalIds: string[]): Pro
   }
 }
 
-let apiMessages: Anthropic.Beta.BetaMessageParam[] = [];
+let apiMessages: ChatMessage[] = [];
 
 export function resetChat() {
   apiMessages = [];
 }
 
-export async function chatWithClaude(userText: string): Promise<{ text: string; proposalIds: string[] }> {
+const GROQ_TOOLS: ToolDef[] = TOOLS.map((t) => ({ type: "function", function: { name: t.name, description: t.description, parameters: t.input_schema } }));
+
+export async function chatWithLLM(userText: string): Promise<{ text: string; proposalIds: string[] }> {
   const checkpoint = apiMessages.length;
   apiMessages.push({ role: "user", content: userText });
   const proposalIds: string[] = [];
   try {
     for (let step = 0; step < 10; step++) {
-      const response = await getClient().beta.messages.create({
-        model: LLM_MODEL,
-        max_tokens: 16000,
-        betas: ["server-side-fallback-2026-07-01"],
-        fallbacks: "default",
-        output_config: { effort: "medium" },
-        system: [{ type: "text", text: SYSTEM, cache_control: { type: "ephemeral" } }],
-        tools: TOOLS,
-        messages: apiMessages,
-      } as Anthropic.Beta.MessageCreateParamsNonStreaming);
-      apiMessages.push({ role: "assistant", content: response.content });
-
-      if (response.stop_reason === "refusal") {
-        return { text: "I can't help with that request.", proposalIds };
-      }
-      const toolUses = response.content.filter((b): b is Anthropic.Beta.BetaToolUseBlock => b.type === "tool_use");
-      if (response.stop_reason !== "tool_use" || toolUses.length === 0) {
-        const text = response.content
-          .filter((b): b is Anthropic.Beta.BetaTextBlock => b.type === "text")
-          .map((b) => b.text)
-          .join("\n")
-          .trim();
-        return { text: text || "Done.", proposalIds };
-      }
-      const results: Anthropic.Beta.BetaToolResultBlockParam[] = [];
-      for (const tu of toolUses) {
+      const res = await chat({ messages: [{ role: "system", content: SYSTEM }, ...apiMessages], tools: GROQ_TOOLS, tool_choice: "auto" });
+      const msg = res.message;
+      apiMessages.push({ role: "assistant", content: msg.content ?? "", tool_calls: msg.tool_calls });
+      if (!msg.tool_calls?.length) return { text: (typeof msg.content === "string" ? msg.content : "").trim() || "Done.", proposalIds };
+      for (const call of msg.tool_calls) {
+        let content: string;
         try {
-          const out = await runTool(tu.name, tu.input, proposalIds);
-          results.push({ type: "tool_result", tool_use_id: tu.id, content: JSON.stringify(out) });
+          const args = call.function.arguments ? JSON.parse(call.function.arguments) : {};
+          content = JSON.stringify(await runTool(call.function.name, args, proposalIds));
         } catch (e) {
-          results.push({ type: "tool_result", tool_use_id: tu.id, is_error: true, content: e instanceof Error ? e.message : String(e) });
+          content = JSON.stringify({ error: e instanceof Error ? e.message : String(e) });
         }
+        apiMessages.push({ role: "tool", tool_call_id: call.id, name: call.function.name, content });
       }
-      apiMessages.push({ role: "user", content: results });
     }
     return { text: "I hit my step limit for this request. Try asking for one thing at a time.", proposalIds };
   } catch (e) {

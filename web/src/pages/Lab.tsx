@@ -51,7 +51,7 @@ export function Lab() {
           </div>
           <div className="vs">
             <div style={{ borderColor: "rgba(227,245,107,.35)" }}>
-              <div className="between"><b>You, with Prism</b><StatusPill tone={t1}>{t1 === "good" ? "Safe" : t1 === "warn" ? "Watch" : "At risk"}</StatusPill></div>
+              <div className="between"><b>You, with Halo</b><StatusPill tone={t1}>{t1 === "good" ? "Safe" : t1 === "warn" ? "Watch" : "At risk"}</StatusPill></div>
               <div className="big-num" style={{ fontSize: 44, color: "#e3f56b", marginTop: 8 }}>{hf(c.loan.healthFactor)}</div>
               <div className="muted" style={{ fontSize: 12.5 }}>
                 {eth(c.loan.collateralEth)} ETH · {usd(c.loan.debt)} debt · credit line {usd(c.loan.creditLine)}

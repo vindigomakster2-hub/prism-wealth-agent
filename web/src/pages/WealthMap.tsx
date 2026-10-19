@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import {
   ArrowUpDown,
   Bot,
@@ -12,7 +12,9 @@ import {
   Layers,
   ListTree,
   LocateFixed,
+  Maximize2,
   Minus,
+  Move,
   Plus,
   Send,
   ShieldCheck,
@@ -24,13 +26,15 @@ import {
   Zap,
 } from "lucide-react";
 import { useApp, type MapUi } from "../App";
-import { api, type StressInput, type TypedAction } from "../api";
+import { api, type AppState } from "../api";
 import { seededTrend } from "../components/charts";
+import { BriefCard, DeepDive, EXPLORE, quickActionsFor, relatedFindings, type Target } from "../components/DeepDive";
 import { Markdown, StatusPill } from "../components/ui";
 import { hf, short, signedPct, timeAgo, usd, usdCompact } from "../format";
-import { CAT_META, CAT_ORDER, buildGraph, curve, layout, liquidityLabel, shocked, type CatId, type Category, type Leaf } from "../lib/graph";
+import { CAT_META, CAT_ORDER, buildGraph, curve, layout, liquidityLabel, shocked, simValues, type CatId, type Category, type Leaf, type SimValues } from "../lib/graph";
 
 type Sel = { type: "root" } | { type: "cat"; id: CatId } | { type: "leaf"; id: string };
+type Graph = ReturnType<typeof buildGraph>;
 
 function useSize<T extends HTMLElement>(): [React.RefObject<T | null>, { w: number; h: number }] {
   const ref = useRef<T>(null);
@@ -43,6 +47,35 @@ function useSize<T extends HTMLElement>(): [React.RefObject<T | null>, { w: numb
   }, []);
   return [ref, size];
 }
+
+// Node positions the user dragged, and collapsed categories: a per-viewer convenience kept in the browser.
+const PREFS_KEY = "halo.map.v1";
+interface MapPrefs {
+  offsets: Record<string, { x: number; y: number }>;
+  collapsed: CatId[];
+}
+function loadPrefs(): MapPrefs {
+  try {
+    const v = JSON.parse(localStorage.getItem(PREFS_KEY) ?? "null");
+    if (v && typeof v === "object") return { offsets: v.offsets ?? {}, collapsed: Array.isArray(v.collapsed) ? v.collapsed : [] };
+  } catch {
+    /* storage unavailable */
+  }
+  return { offsets: {}, collapsed: [] };
+}
+function savePrefs(p: MapPrefs) {
+  try {
+    localStorage.setItem(PREFS_KEY, JSON.stringify(p));
+  } catch {
+    /* storage unavailable */
+  }
+}
+
+const counts = (g: Graph) => ({
+  assets: g.leaves.filter((l) => l.kind === "asset").length,
+  debts: g.leaves.filter((l) => l.kind === "debt").length,
+  policies: g.leaves.filter((l) => l.kind === "policy" && !l.missing).length,
+});
 
 // ======================================================================= toolbar
 
@@ -63,7 +96,7 @@ export function MapToolbar() {
     const csv = rows.map((r) => r.map((c) => `"${c.replace(/"/g, '""')}"`).join(",")).join("\n");
     const a = document.createElement("a");
     a.href = URL.createObjectURL(new Blob([csv], { type: "text/csv" }));
-    a.download = `prism-positions-${new Date().toISOString().slice(0, 10)}.csv`;
+    a.download = `halo-positions-${new Date().toISOString().slice(0, 10)}.csv`;
     a.click();
     URL.revokeObjectURL(a.href);
     setOpen(null);
@@ -80,14 +113,17 @@ export function MapToolbar() {
         </button>
       </div>
       <div className="tool-group">
-        <button className="tool" onClick={() => setMap({ zoom: Math.min(1.8, +(map.zoom + 0.1).toFixed(2)) })} aria-label="Zoom in" title="Zoom in">
+        <button className="tool" onClick={() => setMap({ zoom: Math.min(2, +(map.zoom + 0.1).toFixed(2)) })} aria-label="Zoom in" title="Zoom in">
           <Plus size={18} />
         </button>
-        <button className="tool" onClick={() => setMap({ zoom: Math.max(0.6, +(map.zoom - 0.1).toFixed(2)) })} aria-label="Zoom out" title="Zoom out">
+        <button className="tool" onClick={() => setMap({ zoom: Math.max(0.5, +(map.zoom - 0.1).toFixed(2)) })} aria-label="Zoom out" title="Zoom out">
           <Minus size={18} />
         </button>
-        <button className="tool" onClick={() => setMap({ zoom: 1, recenter: map.recenter + 1 })} aria-label="Reset view" title="Reset view">
+        <button className="tool" onClick={() => setMap({ zoom: 1, recenter: map.recenter + 1 })} aria-label="Reset view" title="Reset zoom and pan">
           <LocateFixed size={17} />
+        </button>
+        <button className="tool" onClick={() => setMap({ zoom: 1, recenter: map.recenter + 1, resetLayout: map.resetLayout + 1 })} aria-label="Reset node positions" title="Put dragged nodes back">
+          <Move size={17} />
         </button>
       </div>
       <div className="tool-group pop-anchor">
@@ -155,7 +191,7 @@ export function MapToolbar() {
 function RiskBars({ level, tone }: { level: Leaf["riskLevel"]; tone?: "policy" | "missing" }) {
   const n = level === "low" ? 1 : level === "medium" ? 2 : 3;
   const color = tone === "missing" ? "#ff6b6b" : tone === "policy" ? "#4cc38a" : level === "low" ? "#4cc38a" : level === "medium" ? "#f5c451" : "#ff6b6b";
-  const filled = tone === "policy" ? 3 : tone === "missing" ? 3 : n;
+  const filled = tone ? 3 : n;
   return (
     <span className="rbars" aria-hidden="true">
       {[0, 1, 2].map((i) => (
@@ -171,27 +207,55 @@ function BehaviourIcon({ b }: { b: Leaf["behavior"] }) {
   return <Minus size={11} color="#a9a2a7" aria-label="Neutral" />;
 }
 
-function leafValue(l: Leaf, sim: StressInput | null) {
+function leafValue(l: Leaf, sim: SimValues) {
   if (l.kind === "policy") return l.missing ? "gap" : `${usdCompact(l.value)} cover`;
   return usdCompact(shocked(l, sim));
 }
 
-function Graph({ g, sel, setSel }: { g: ReturnType<typeof buildGraph>; sel: Sel; setSel: (s: Sel) => void }) {
-  const { s, map, sim, setMap } = useApp();
+type DragState = { mode: "pan" | "node"; id?: string; sx: number; sy: number; ox: number; oy: number; moved: boolean };
+
+function Graph({
+  g,
+  sel,
+  onPick,
+  prefs,
+  setPrefs,
+  brief,
+  setBrief,
+  onDive,
+  sim,
+  headline,
+}: {
+  g: Graph;
+  sel: Sel;
+  onPick: (t: Target) => void;
+  prefs: MapPrefs;
+  setPrefs: (f: (p: MapPrefs) => MapPrefs) => void;
+  brief: Target | null;
+  setBrief: (t: Target | null) => void;
+  onDive: (t: Target) => void;
+  sim: SimValues;
+  headline: { label: string; value: number; note?: string; negative?: boolean };
+}) {
+  const { s, map, setMap } = useApp();
   const [ref, size] = useSize<HTMLDivElement>();
   const [pan, setPan] = useState({ x: 0, y: 0 });
-  const drag = useRef<{ x: number; y: number; px: number; py: number } | null>(null);
   const [hover, setHover] = useState<string | null>(null);
+  const drag = useRef<DragState | null>(null);
+  const [dragging, setDragging] = useState<string | null>(null);
   useEffect(() => setPan({ x: 0, y: 0 }), [map.recenter]);
 
-  const W = size.w;
-  const H = size.h;
-  const L = useMemo(() => layout(W, H, g.categories), [W, H, g.categories]);
-  const cardById = new Map(L.cards.map((c) => [c.id, c]));
-  const ptById = new Map(L.pts.map((p) => [p.id, p]));
+  const L = useMemo(() => layout(size.w, size.h, g.categories, prefs.collapsed), [size.w, size.h, g.categories, prefs.collapsed]);
+  const scale = L.fit * map.zoom;
+  const off = (id: string) => prefs.offsets[id] ?? { x: 0, y: 0 };
+  const orb = { ...L.orb, x: L.orb.x + off("orb").x, y: L.orb.y + off("orb").y };
+  const cards = new Map(L.cards.map((c) => [c.id, { ...c, x: c.x + off(`cat:${c.id}`).x, y: c.y + off(`cat:${c.id}`).y }]));
+  const pts = new Map(L.pts.map((p) => [p.id, { ...p, x: p.x + off(`leaf:${p.id}`).x, y: p.y + off(`leaf:${p.id}`).y }]));
+  const shown = g.leaves.filter((l) => pts.has(l.id));
+
   const q = map.query.trim().toLowerCase();
   const matches = (l: Leaf) => q.length > 0 && `${l.name} ${l.institution}`.toLowerCase().includes(q);
-  const anyMatch = q.length > 0 && g.leaves.some(matches);
+  const anyMatch = q.length > 0 && shown.some(matches);
   const selLeaf = sel.type === "leaf" ? g.leaves.find((l) => l.id === sel.id) : undefined;
   const focusCat: CatId | null = sel.type === "cat" ? sel.id : selLeaf ? selLeaf.cat : null;
 
@@ -208,28 +272,67 @@ function Graph({ g, sel, setSel }: { g: ReturnType<typeof buildGraph>; sel: Sel;
     return 1;
   };
   const lineOpacity = [0.1, 0.38, 0.85, 1];
-  const showChips = L.spacing >= 29;
-  const netWorth = sim ? g.leaves.filter((l) => l.kind !== "policy").reduce((a, l) => a + shocked(l, sim), 0) : s.risk.totals.netWorth;
-  const nwDelta = sim ? ((netWorth - s.risk.totals.netWorth) / s.risk.totals.netWorth) * 100 : null;
-  const haloR = Math.min(H * 0.42, 260);
-  const selCard = focusCat ? cardById.get(focusCat) : undefined;
+  const selCard = focusCat ? cards.get(focusCat) : undefined;
 
-  const onDown = (e: React.PointerEvent) => {
-    if ((e.target as HTMLElement).closest("button")) return;
-    drag.current = { x: e.clientX, y: e.clientY, px: pan.x, py: pan.y };
-    (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+  // ---------------------------------------------------------------- pointer: click, drag a node, or pan
+  const startNode = (e: React.PointerEvent, id: string) => {
+    if (e.button !== 0) return;
+    e.stopPropagation();
+    const o = off(id);
+    drag.current = { mode: "node", id, sx: e.clientX, sy: e.clientY, ox: o.x, oy: o.y, moved: false };
+    ref.current?.setPointerCapture(e.pointerId);
+  };
+  const startPan = (e: React.PointerEvent) => {
+    if (e.button !== 0) return;
+    drag.current = { mode: "pan", sx: e.clientX, sy: e.clientY, ox: pan.x, oy: pan.y, moved: false };
+    ref.current?.setPointerCapture(e.pointerId);
   };
   const onMove = (e: React.PointerEvent) => {
-    if (!drag.current) return;
-    setPan({ x: drag.current.px + e.clientX - drag.current.x, y: drag.current.py + e.clientY - drag.current.y });
+    const d = drag.current;
+    if (!d) return;
+    const dx = e.clientX - d.sx;
+    const dy = e.clientY - d.sy;
+    if (!d.moved && Math.hypot(dx, dy) < 4) return;
+    d.moved = true;
+    if (d.mode === "pan") setPan({ x: d.ox + dx, y: d.oy + dy });
+    else {
+      setDragging(d.id!);
+      setPrefs((p) => ({ ...p, offsets: { ...p.offsets, [d.id!]: { x: d.ox + dx / scale, y: d.oy + dy / scale } } }));
+    }
   };
-  const onUp = () => (drag.current = null);
+  const onUp = () => {
+    const d = drag.current;
+    drag.current = null;
+    setDragging(null);
+    if (!d || d.moved) return;
+    if (d.mode === "pan") {
+      setBrief(null);
+      return;
+    }
+    const id = d.id!;
+    const t: Target = id === "orb" ? { kind: "orb" } : id.startsWith("cat:") ? { kind: "cat", id: id.slice(4) as CatId } : { kind: "leaf", id: id.slice(5) };
+    onPick(t);
+  };
+
+  // Brief popover anchored next to its node, in screen coordinates (stays readable at any zoom).
+  let briefPos: { left: number; top: number } | null = null;
+  if (brief) {
+    const anchor =
+      brief.kind === "orb" ? { x: orb.x + orb.r + 20, y: orb.y - 60 } : brief.kind === "cat" ? (() => { const c = cards.get(brief.id); return c ? { x: c.x + c.w + 16, y: c.y } : null; })() : (() => { const p = pts.get(brief.id); return p ? { x: p.x + 200, y: p.y - 20 } : null; })();
+    if (anchor) {
+      let left = pan.x + anchor.x * scale;
+      let top = pan.y + anchor.y * scale;
+      if (left + 300 > size.w) left = Math.max(8, left - 300 - (brief.kind === "leaf" ? 220 : 40) * scale);
+      top = Math.min(Math.max(56, top), Math.max(56, size.h - 330));
+      briefPos = { left, top };
+    }
+  }
 
   return (
-    <div className="map-canvas" ref={ref} onPointerDown={onDown} onPointerMove={onMove} onPointerUp={onUp} onPointerCancel={onUp}>
-      {W > 0 && (
-        <div className="map-inner" style={{ transform: `translate(${pan.x}px, ${pan.y}px) scale(${map.zoom})`, transformOrigin: `${L.orb.x}px 50%` }}>
-          <svg width={W} height={H} className="map-svg" aria-hidden="true">
+    <div className="map-canvas" ref={ref} onPointerDown={startPan} onPointerMove={onMove} onPointerUp={onUp} onPointerCancel={onUp}>
+      {size.w > 0 && (
+        <div className="map-inner" style={{ width: L.W, height: L.H, transform: `translate(${pan.x}px, ${pan.y}px) scale(${scale})`, transformOrigin: "0 0", transition: dragging ? "none" : undefined }}>
+          <svg width={L.W} height={L.H} className="map-svg" aria-hidden="true">
             <defs>
               <radialGradient id="halo" cx="50%" cy="50%" r="50%">
                 <stop offset="0%" stopColor="#ffffff" stopOpacity="0.05" />
@@ -252,17 +355,16 @@ function Graph({ g, sel, setSel }: { g: ReturnType<typeof buildGraph>; sel: Sel;
               </radialGradient>
             </defs>
 
-            <circle cx={L.orb.x} cy={L.orb.y} r={haloR} fill="url(#halo)" stroke="rgba(255,255,255,0.05)" />
-            <circle cx={L.orb.x} cy={L.orb.y} r={haloR * 0.6} fill="rgba(8,7,9,0.55)" stroke="rgba(255,255,255,0.06)" />
+            <circle cx={orb.x} cy={orb.y} r={L.haloR} fill="url(#halo)" stroke="rgba(255,255,255,0.05)" />
+            <circle cx={orb.x} cy={orb.y} r={L.haloR * 0.6} fill="rgba(8,7,9,0.55)" stroke="rgba(255,255,255,0.06)" />
 
-            {/* orb → categories */}
-            {L.cards.map((card) => {
-              const c = g.categories.find((x) => x.id === card.id)!;
+            {g.categories.map((c) => {
+              const card = cards.get(c.id)!;
               const em = catEm(c);
               return (
                 <path
-                  key={`o-${card.id}`}
-                  d={curve(L.orb.x + L.orb.r + 26, L.orb.y, card.x, card.y + card.h / 2, 0.5)}
+                  key={`o-${c.id}`}
+                  d={curve(orb.x + orb.r + 26, orb.y, card.x, card.y + card.h / 2, 0.5)}
                   fill="none"
                   stroke="#efe6d2"
                   strokeOpacity={em === 2 ? 0.9 : em === 1 ? 0.5 : 0.14}
@@ -272,32 +374,33 @@ function Graph({ g, sel, setSel }: { g: ReturnType<typeof buildGraph>; sel: Sel;
               );
             })}
 
-            {/* categories → positions */}
             {g.categories.flatMap((c) => {
-              const card = cardById.get(c.id)!;
-              return c.leaves.map((l) => {
-                const p = ptById.get(l.id)!;
-                const em = leafEm(l);
-                return (
-                  <path
-                    key={`${l.id}-${focusCat ?? "all"}`}
-                    className={em >= 2 && c.kind === "asset" ? "draw" : undefined}
-                    pathLength={1}
-                    d={curve(card.x + card.w, card.y + card.h / 2, p.x - 4, p.y, 0.42)}
-                    fill="none"
-                    stroke={em === 3 ? "#e3f56b" : "#efe6d2"}
-                    strokeOpacity={lineOpacity[em]}
-                    strokeWidth={em >= 2 ? 1.3 : 0.9}
-                    strokeDasharray={c.kind === "debt" ? "0.012 0.01" : c.kind === "policy" ? "0.004 0.01" : undefined}
-                  />
-                );
-              });
+              const card = cards.get(c.id)!;
+              return c.leaves
+                .filter((l) => pts.has(l.id))
+                .map((l) => {
+                  const p = pts.get(l.id)!;
+                  const em = leafEm(l);
+                  return (
+                    <path
+                      key={`${l.id}-${focusCat ?? "all"}`}
+                      className={em >= 2 && c.kind === "asset" && !dragging ? "draw" : undefined}
+                      pathLength={1}
+                      d={curve(card.x + card.w, card.y + card.h / 2, p.x - 4, p.y, 0.42)}
+                      fill="none"
+                      stroke={em === 3 ? "#e3f56b" : "#efe6d2"}
+                      strokeOpacity={lineOpacity[em]}
+                      strokeWidth={em >= 2 ? 1.3 : 0.9}
+                      strokeDasharray={c.kind === "debt" ? "0.012 0.01" : c.kind === "policy" ? "0.004 0.01" : undefined}
+                    />
+                  );
+                });
             })}
 
             {selCard && <ellipse cx={selCard.x + selCard.w} cy={selCard.y + selCard.h / 2} rx={34} ry={20} fill="url(#flare)" />}
 
-            {g.leaves.map((l) => {
-              const p = ptById.get(l.id)!;
+            {shown.map((l) => {
+              const p = pts.get(l.id)!;
               const em = leafEm(l);
               return (
                 <g key={`d-${l.id}`}>
@@ -307,111 +410,135 @@ function Graph({ g, sel, setSel }: { g: ReturnType<typeof buildGraph>; sel: Sel;
               );
             })}
 
-            {/* orb */}
-            <circle cx={L.orb.x} cy={L.orb.y} r={L.orb.r * 2.6} fill="url(#orbGlow)" />
-            <g className="orb-ring" style={{ transformOrigin: `${L.orb.x}px ${L.orb.y}px` }}>
+            <circle cx={orb.x} cy={orb.y} r={orb.r * 2.6} fill="url(#orbGlow)" />
+            <g className="orb-ring" style={{ transformOrigin: `${orb.x}px ${orb.y}px` }}>
               {Array.from({ length: 64 }).map((_, i) => {
                 const a = (i / 64) * Math.PI * 2;
-                const rr = L.orb.r + 14 + ((i * 37) % 7);
-                return <circle key={i} cx={L.orb.x + rr * Math.cos(a)} cy={L.orb.y + rr * Math.sin(a)} r={i % 5 === 0 ? 1.4 : 0.8} fill={i % 3 === 0 ? "#e3f56b" : "#efe6d2"} opacity={0.35 + ((i * 13) % 10) / 20} />;
+                const rr = orb.r + 14 + ((i * 37) % 7);
+                return <circle key={i} cx={orb.x + rr * Math.cos(a)} cy={orb.y + rr * Math.sin(a)} r={i % 5 === 0 ? 1.4 : 0.8} fill={i % 3 === 0 ? "#e3f56b" : "#efe6d2"} opacity={0.35 + ((i * 13) % 10) / 20} />;
               })}
             </g>
-            <circle cx={L.orb.x} cy={L.orb.y} r={L.orb.r} fill="url(#orbGrad)" />
-            <circle cx={L.orb.x - L.orb.r * 0.32} cy={L.orb.y - L.orb.r * 0.38} r={L.orb.r * 0.22} fill="#ffffff" opacity={0.55} />
+            <circle cx={orb.x} cy={orb.y} r={orb.r} fill="url(#orbGrad)" />
+            <circle cx={orb.x - orb.r * 0.32} cy={orb.y - orb.r * 0.38} r={orb.r * 0.22} fill="#ffffff" opacity={0.55} />
           </svg>
 
-          {/* orb label + hit area */}
-          <div className="orb-label" style={{ left: L.orb.x, top: L.orb.y - L.orb.r - 92 }}>
-            <div className="orb-kicker">{map.balance === "true" ? "True balance" : "Net worth"}</div>
-            {map.balance === "true" ? (
-              <div className="orb-value num" style={{ color: s.risk.totals.trueBalance < 0 ? "#ff8a8a" : "#e3f56b" }}>{usd(s.risk.totals.trueBalance)}</div>
-            ) : (
-              <div className="orb-value num">{usd(netWorth)}</div>
-            )}
-            {map.balance === "true" && <div className="orb-delta" style={{ color: "#a9a2a7" }}>reachable in a week − all debts</div>}
-            {map.balance !== "true" && nwDelta !== null && <div className="orb-delta num" style={{ color: nwDelta < 0 ? "#ffbcbc" : "#a6e8c6" }}>{signedPct(nwDelta)} in simulation</div>}
+          <div className="orb-label" style={{ left: orb.x, top: orb.y - orb.r - 92 }}>
+            <div className="orb-kicker">{headline.label}</div>
+            <div className="orb-value num" style={{ color: headline.negative ? "#ff8a8a" : undefined }}>{usd(headline.value)}</div>
+            {headline.note && <div className="orb-delta" style={{ color: "#a9a2a7" }}>{headline.note}</div>}
           </div>
-          <button className={`orb-hit ${sel.type === "root" ? "on" : ""}`} style={{ left: L.orb.x - L.orb.r - 18, top: L.orb.y - L.orb.r - 18, width: (L.orb.r + 18) * 2, height: (L.orb.r + 18) * 2 }} onClick={() => setSel({ type: "root" })} aria-label="Whole portfolio" />
-          <div className="orb-foot" style={{ left: L.orb.x, top: L.orb.y + L.orb.r + 30 }}>
+          <button
+            className={`orb-hit ${sel.type === "root" ? "on" : ""} ${dragging === "orb" ? "dragging" : ""}`}
+            style={{ left: orb.x - orb.r - 18, top: orb.y - orb.r - 18, width: (orb.r + 18) * 2, height: (orb.r + 18) * 2 }}
+            onPointerDown={(e) => startNode(e, "orb")}
+            aria-label="Whole portfolio: click for details, drag to move"
+          />
+          <div className="orb-foot" style={{ left: orb.x, top: orb.y + orb.r + 30 }}>
             <span className="chip num">RISK {s.risk.riskScore}</span>
             <span className="chip num">HF {hf(s.chain.loan.healthFactor)}</span>
           </div>
-          <button className="btn sm orb-toggle" style={{ left: L.orb.x, top: L.orb.y + L.orb.r + 56 }} onClick={() => setMap({ balance: map.balance === "true" ? "net" : "true" })}>
+          <button className="btn sm orb-toggle" style={{ left: orb.x, top: orb.y + orb.r + 56 }} onPointerDown={(e) => e.stopPropagation()} onClick={() => setMap({ balance: map.balance === "true" ? "net" : "true" })}>
             {map.balance === "true" ? "Show net worth" : "See true balance"}
           </button>
 
-          {/* categories */}
-          {L.cards.map((card) => {
-            const c = g.categories.find((x) => x.id === card.id)!;
+          {g.categories.map((c) => {
+            const card = cards.get(c.id)!;
             const em = catEm(c);
             const Icon = c.icon;
+            const isCollapsed = prefs.collapsed.includes(c.id);
             const val = c.kind === "policy" ? `${c.leaves.filter((l) => !l.missing).length}` : usdCompact(c.leaves.reduce((a, l) => a + shocked(l, sim), 0));
             return (
-              <button
-                key={card.id}
-                className={`map-card ${em === 2 ? "on" : ""} ${em === 0 ? "dim" : ""}`}
+              <div
+                key={c.id}
+                className={`map-card ${em === 2 ? "on" : ""} ${em === 0 ? "dim" : ""} ${dragging === `cat:${c.id}` ? "dragging" : ""}`}
                 style={{ left: card.x, top: card.y, width: card.w, height: card.h }}
-                onClick={() => setSel(sel.type === "cat" && sel.id === c.id ? { type: "root" } : { type: "cat", id: c.id })}
+                onPointerDown={(e) => startNode(e, `cat:${c.id}`)}
+                role="button"
+                tabIndex={0}
+                aria-label={`${c.label}: click for details, drag to move`}
+                onKeyDown={(e) => (e.key === "Enter" || e.key === " ") && onPick({ kind: "cat", id: c.id })}
               >
                 <span className="mc-top">
                   <Icon size={14} color={c.color} />
                   <span className="mc-val num" style={c.kind === "debt" ? { color: "#ffbcbc" } : undefined}>{val}</span>
                 </span>
-                <span className="mc-label">
-                  {c.kind === "policy" ? `${c.label} · ${c.leaves.some((l) => l.missing) ? "1 gap" : "covered"}` : c.label}
-                </span>
+                <span className="mc-label">{c.kind === "policy" ? `${c.label} · ${c.leaves.some((l) => l.missing) ? "1 gap" : "covered"}` : c.label}</span>
                 {card.h >= 62 && (
                   <span className="mc-sub">
-                    {c.leaves.length} position{c.leaves.length === 1 ? "" : "s"} · {c.institutions.length} source{c.institutions.length === 1 ? "" : "s"}
+                    {c.leaves.length} {c.kind === "debt" ? "debt" : c.kind === "policy" ? "item" : "position"}{c.leaves.length === 1 ? "" : "s"} · {c.institutions.length} source{c.institutions.length === 1 ? "" : "s"}
                     {c.kind === "asset" && <b className="num">{Math.round(c.sharePct)}%</b>}
                   </span>
                 )}
-              </button>
+                <button
+                  className="mc-collapse"
+                  onPointerDown={(e) => e.stopPropagation()}
+                  onClick={() => setPrefs((p) => ({ ...p, collapsed: isCollapsed ? p.collapsed.filter((x) => x !== c.id) : [...p.collapsed, c.id] }))}
+                  aria-label={isCollapsed ? `Show ${c.label} positions` : `Hide ${c.label} positions`}
+                  title={isCollapsed ? `Show ${c.leaves.length} positions` : "Hide positions"}
+                >
+                  {isCollapsed ? `+${c.leaves.length}` : <Minus size={11} />}
+                </button>
+              </div>
             );
           })}
 
-          {/* positions */}
-          {g.leaves.map((l) => {
-            const p = ptById.get(l.id)!;
+          {shown.map((l) => {
+            const p = pts.get(l.id)!;
             const em = leafEm(l);
             const sv = shocked(l, sim);
-            const delta = sim && l.kind === "asset" ? sv - l.value : 0;
+            const delta = sim && l.kind !== "policy" ? sv - l.value : 0;
             return (
-              <button
+              <div
                 key={l.id}
-                className={`leaf ${em === 0 ? "dim" : ""} ${em === 3 ? "on" : ""} ${showChips ? "" : "compact"}`}
-                style={{ left: p.x + 10, top: p.y - (showChips ? 15 : 9) }}
-                onClick={() => setSel({ type: "leaf", id: l.id })}
+                className={`leaf ${em === 0 ? "dim" : ""} ${em === 3 ? "on" : ""} ${dragging === `leaf:${l.id}` ? "dragging" : ""}`}
+                style={{ left: p.x + 10, top: p.y - 15 }}
+                onPointerDown={(e) => startNode(e, `leaf:${l.id}`)}
                 onMouseEnter={() => setHover(l.id)}
                 onMouseLeave={() => setHover(null)}
-                title={`${l.name} · ${l.institution}`}
+                role="button"
+                tabIndex={0}
+                title={`${l.name} · ${l.institution}: click for details, drag to move`}
+                onKeyDown={(e) => (e.key === "Enter" || e.key === " ") && onPick({ kind: "leaf", id: l.id })}
               >
-                <span className="leaf-name">
-                  {l.name}
-                  {!showChips && <span className="leaf-inline num"> · {leafValue(l, sim)}</span>}
+                <span className="leaf-name">{l.name}</span>
+                <span className="leaf-chips">
+                  <span className={`chip num ${l.kind === "debt" ? "neg" : ""} ${l.missing ? "warn" : ""}`}>{leafValue(l, sim)}</span>
+                  {Math.abs(delta) >= 1 && <span className="chip num neg">{usdCompact(delta)}</span>}
+                  <BehaviourIcon b={l.behavior} />
+                  <RiskBars level={l.riskLevel} tone={l.kind === "policy" ? (l.missing ? "missing" : "policy") : undefined} />
+                  {l.onchain && <span className="chip onchain">on-chain</span>}
                 </span>
-                {showChips && (
-                  <span className="leaf-chips">
-                    <span className={`chip num ${l.kind === "debt" ? "neg" : ""} ${l.missing ? "warn" : ""}`}>{leafValue(l, sim)}</span>
-                    {delta !== 0 && <span className="chip num neg">{usdCompact(delta)}</span>}
-                    <BehaviourIcon b={l.behavior} />
-                    <RiskBars level={l.riskLevel} tone={l.kind === "policy" ? (l.missing ? "missing" : "policy") : undefined} />
-                    {l.onchain && <span className="chip onchain">on-chain</span>}
-                  </span>
-                )}
-              </button>
+              </div>
             );
           })}
         </div>
       )}
+      {brief && briefPos && (
+        <div style={{ position: "absolute", left: briefPos.left, top: briefPos.top, zIndex: 20 }}>
+          <BriefCard
+            t={brief}
+            g={g}
+            s={s}
+            sim={sim}
+            netWorth={headline.value}
+            collapsed={prefs.collapsed}
+            onToggleCollapse={(id) => setPrefs((p) => ({ ...p, collapsed: p.collapsed.includes(id) ? p.collapsed.filter((x) => x !== id) : [...p.collapsed, id] }))}
+            onDive={() => onDive(brief)}
+            onClose={() => setBrief(null)}
+          />
+        </div>
+      )}
+      <div className="map-hint">
+        <Move size={12} /> Drag nodes to rearrange · drag the background to pan · click for details
+      </div>
     </div>
   );
 }
 
 // ======================================================================= tree
 
-function TreeView({ g, sel, setSel }: { g: ReturnType<typeof buildGraph>; sel: Sel; setSel: (s: Sel) => void }) {
-  const { sim, map } = useApp();
+function TreeView({ g, sel, onPick, sim }: { g: Graph; sel: Sel; onPick: (t: Target) => void; sim: SimValues }) {
+  const { map } = useApp();
   const [closed, setClosed] = useState<CatId[]>([]);
   const q = map.query.trim().toLowerCase();
   return (
@@ -421,7 +548,7 @@ function TreeView({ g, sel, setSel }: { g: ReturnType<typeof buildGraph>; sel: S
         const isClosed = closed.includes(c.id);
         return (
           <div key={c.id} className="tree-group">
-            <button className={`tree-cat ${sel.type === "cat" && sel.id === c.id ? "on" : ""}`} onClick={() => setSel({ type: "cat", id: c.id })}>
+            <button className={`tree-cat ${sel.type === "cat" && sel.id === c.id ? "on" : ""}`} onClick={() => onPick({ kind: "cat", id: c.id })}>
               <ChevronRight
                 size={16}
                 style={{ transform: isClosed ? undefined : "rotate(90deg)", transition: "transform .15s" }}
@@ -432,14 +559,14 @@ function TreeView({ g, sel, setSel }: { g: ReturnType<typeof buildGraph>; sel: S
               />
               <Icon size={16} color={c.color} />
               <span className="tc-label">{c.label}</span>
-              <span className="muted">{c.leaves.length} positions · {c.institutions.join(", ")}</span>
+              <span className="muted">{c.leaves.length} items · {c.institutions.join(", ")}</span>
               <span className="tc-val num">{c.kind === "policy" ? "" : usd(c.leaves.reduce((a, l) => a + shocked(l, sim), 0))}</span>
             </button>
             {!isClosed &&
               c.leaves
                 .filter((l) => !q || `${l.name} ${l.institution}`.toLowerCase().includes(q))
                 .map((l) => (
-                  <button key={l.id} className={`tree-leaf ${sel.type === "leaf" && sel.id === l.id ? "on" : ""}`} onClick={() => setSel({ type: "leaf", id: l.id })}>
+                  <button key={l.id} className={`tree-leaf ${sel.type === "leaf" && sel.id === l.id ? "on" : ""}`} onClick={() => onPick({ kind: "leaf", id: l.id })}>
                     <span className="tl-name">{l.name}</span>
                     <span className="muted">{l.institution}</span>
                     <span className="muted">{l.kind === "asset" ? liquidityLabel(l.liquidityDays) : l.kind === "debt" ? `${l.aprPct}% APR` : l.missing ? "missing" : `$${l.monthly}/mo`}</span>
@@ -455,28 +582,6 @@ function TreeView({ g, sel, setSel }: { g: ReturnType<typeof buildGraph>; sel: S
 }
 
 // ======================================================================= panel
-
-const CAT_FINDINGS: Record<CatId, string[]> = {
-  cash: ["dgs-", "idle-cash", "fx"],
-  equities: ["risk-on", "capital-at-risk"],
-  bonds: [],
-  private: ["risk-on", "capital-at-risk"],
-  crypto: ["cover-claim", "loan-health", "loan-cover", "proof", "proof-expiring"],
-  real: ["capital-at-risk"],
-  debts: ["debt-", "drains", "proof", "loan-health"],
-  insurance: ["life-gap", "loan-cover", "cover-claim"],
-};
-
-const EXPLORE: Record<CatId, { page: "accounts" | "risk" | "credit" | "protect" | "cashflow"; label: string }> = {
-  cash: { page: "accounts", label: "Open accounts" },
-  equities: { page: "risk", label: "Open risk radar" },
-  bonds: { page: "protect", label: "Open earn & protect" },
-  private: { page: "risk", label: "Open risk radar" },
-  crypto: { page: "credit", label: "Open credit" },
-  real: { page: "cashflow", label: "Manage assets" },
-  debts: { page: "cashflow", label: "Debts & payoff plan" },
-  insurance: { page: "protect", label: "Open earn & protect" },
-};
 
 function DotBars({ values }: { values: number[] }) {
   const min = Math.min(...values);
@@ -519,16 +624,15 @@ function Tile({ icon, value, label }: { icon: ReactNode; value: ReactNode; label
   );
 }
 
-function Panel({ g, sel, setSel }: { g: ReturnType<typeof buildGraph>; sel: Sel; setSel: (s: Sel) => void }) {
+function Panel({ g, sel, onPick, onDive, sim, headline }: { g: Graph; sel: Sel; onPick: (t: Target) => void; onDive: (t: Target) => void; sim: SimValues; headline: number }) {
   const { s, go, run } = useApp();
   const [q, setQ] = useState("");
   const [asking, setAsking] = useState<string | null>(null);
   const [reply, setReply] = useState<{ q: string; text: string } | null>(null);
   const analysisRef = useRef<HTMLDivElement>(null);
   const pending = s.proposals.filter((p) => p.status === "pending_approval").length;
-  const lastSync = Math.max(...s.sources.filter((x) => x.connected).map((x) => x.lastSync));
-  const findings = s.risk.findings;
-  const byPrefix = (prefixes: string[]) => findings.filter((f) => prefixes.some((p) => f.id.startsWith(p)));
+  const lastSync = Math.max(...s.sources.filter((x) => x.connected).map((x) => x.lastSync), 0);
+  const n = counts(g);
 
   const ask = async (text: string) => {
     const t = text.trim();
@@ -544,56 +648,55 @@ function Panel({ g, sel, setSel }: { g: ReturnType<typeof buildGraph>; sel: Sel;
     setAsking(null);
   };
 
-  // --------------------------------------------------------------- content per selection
+  const target: Target = sel.type === "root" ? { kind: "orb" } : sel.type === "cat" ? { kind: "cat", id: sel.id } : { kind: "leaf", id: sel.id };
   let kicker: ReactNode;
   let title: ReactNode;
   let subtitle: ReactNode;
   let statusPill: ReactNode;
   let statusText: ReactNode;
   let explore: { label: string; onClick: () => void };
-  let metric: { label: string; value: string; delta: number | null; badge: string; series: number[] };
+  let metric: { label: string; value: string; delta: number | null; badge?: string; series: number[] };
   let tiles: ReactNode[];
-  let items = findings.slice(0, 3);
-  let quick: Array<{ label: string; action: TypedAction; reason: string }> = [];
+  let quick: ReturnType<typeof quickActionsFor> = [];
   let note: string | null = null;
+  const leaf = sel.type === "leaf" ? g.all.find((x) => x.id === sel.id) : undefined;
+  const items = relatedFindings(s, target, leaf);
 
-  if (sel.type === "root") {
-    const t = s.risk.totals;
+  if (sel.type === "root" || (sel.type === "leaf" && !leaf)) {
     const h = s.history.netWorth;
     kicker = <><Layers size={18} /> Whole portfolio</>;
     title = "Net worth";
-    subtitle = `${usd(t.netWorth)} across ${s.sources.filter((x) => x.connected).length + 1} sources`;
+    subtitle = `${usd(headline)} · ${n.assets} positions, ${n.debts} debts, ${n.policies} policies`;
     statusPill = <span className="pill good"><span className="live-dot" /> Live</span>;
     statusText = <>Accounts synced {timeAgo(lastSync)}. Chain time {new Date(s.chain.chainTime * 1000).toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric" })}.</>;
     explore = { label: "Risk radar", onClick: () => go("risk") };
-    metric = { label: "Net worth trend", value: usdCompact(t.netWorth), delta: ((h[h.length - 1] - h[h.length - 2]) / h[h.length - 2]) * 100, badge: s.risk.riskLabel, series: densify(h) };
+    metric = { label: "Net worth, 12 months", value: usdCompact(headline), delta: ((h[h.length - 1] - h[h.length - 2]) / h[h.length - 2]) * 100, series: densify(h) };
     tiles = [
-      <Tile key="1" icon={<Layers size={20} />} value={g.all.filter((l) => l.kind === "asset").length} label="Positions" />,
+      <Tile key="1" icon={<Layers size={20} />} value={n.assets} label="Positions" />,
       <Tile key="2" icon={<ShieldCheck size={20} />} value={s.sources.filter((x) => x.connected).length + 1} label="Sources connected" />,
       <Tile key="3" icon={<TrendingUp size={20} />} value={usdCompact(s.risk.cashflow.passiveIncomeUsd)} label="Passive income / yr" />,
       <Tile key="4" icon={<Zap size={20} />} value={`${Math.round(s.risk.capitalAtRiskPct)}%`} label="Capital at high risk" />,
     ];
-    items = [...findings.filter((f) => f.action).slice(0, 2), ...findings.filter((f) => !f.action)].slice(0, 4);
   } else if (sel.type === "cat") {
     const c = g.categories.find((x) => x.id === sel.id)!;
     const Icon = c.icon;
     const highShare = c.leaves.filter((l) => l.riskLevel === "high").reduce((a, l) => a + Math.abs(l.value), 0) / Math.max(1, Math.abs(c.value));
     kicker = <><Icon size={18} color={c.color} /> Category</>;
     title = c.label;
-    subtitle = `${c.leaves.length} positions at ${c.institutions.join(", ")}`;
+    subtitle = `${c.leaves.length} ${c.kind === "asset" ? "positions" : "items"} at ${c.institutions.join(", ")}`;
     const tone = c.kind === "debt" ? "warn" : c.kind === "policy" ? (c.leaves.some((l) => l.missing) ? "warn" : "good") : highShare > 0.5 ? "bad" : highShare > 0.2 ? "warn" : "good";
     statusPill = <StatusPill tone={tone}>{c.kind === "debt" ? "Costs money" : c.kind === "policy" ? (tone === "good" ? "Covered" : "Gap found") : tone === "good" ? "Low risk" : tone === "warn" ? "Medium risk" : "High risk"}</StatusPill>;
     statusText = <>Merged from {c.institutions.length} source{c.institutions.length === 1 ? "" : "s"}, synced {timeAgo(lastSync)}.</>;
     explore = { label: EXPLORE[c.id].label, onClick: () => go(EXPLORE[c.id].page) };
     const series = seededTrend(c.id, Math.max(1, Math.abs(c.value)), 28, 0.03);
     metric = {
-      label: c.kind === "asset" ? "Share of net worth" : c.kind === "debt" ? "Total owed" : "Total cover",
+      label: c.kind === "asset" ? "Share of assets" : c.kind === "debt" ? "Total owed" : "Total cover",
       value: c.kind === "asset" ? `${Math.round(c.sharePct)}%` : usdCompact(Math.abs(c.value)),
       delta: ((series[series.length - 1] - series[series.length - 3]) / series[series.length - 3]) * 100,
-      badge: c.kind === "asset" ? (highShare > 0.5 ? "High" : highShare > 0.2 ? "Moderate" : "Low") : c.kind === "debt" ? "Drain" : tone === "good" ? "OK" : "Gap",
+      badge: c.kind === "asset" ? (highShare > 0.5 ? "High risk" : highShare > 0.2 ? "Medium risk" : "Low risk") : undefined,
       series,
     };
-    const liquidWeek = c.leaves.filter((l) => (l.liquidityDays ?? 999) <= 7 && !l.encumbered).reduce((a, l) => a + l.value, 0);
+    const liquidWeek = c.leaves.filter((l) => (l.liquidityDays ?? 999) <= 7 && !l.encumbered && l.kind === "asset").reduce((a, l) => a + l.value, 0);
     const collateral = c.leaves.reduce((a, l) => a + (l.pledgeableUsd ?? 0), 0);
     tiles =
       c.kind === "debt"
@@ -616,24 +719,23 @@ function Panel({ g, sel, setSel }: { g: ReturnType<typeof buildGraph>; sel: Sel;
               <Tile key="3" icon={<Clock size={20} />} value={usdCompact(liquidWeek)} label="Spendable within a week" />,
               <Tile key="4" icon={<CircleCheck size={20} />} value={usdCompact(collateral)} label="Counts as collateral" />,
             ];
-    items = byPrefix(CAT_FINDINGS[c.id]);
-    if (!items.length) note = `Nothing to fix here. ${c.kind === "asset" ? `${usdCompact(collateral)} of this category already counts toward your credit line.` : ""}`;
+    if (!items.length) note = `Nothing to fix here.${c.kind === "asset" ? ` ${usdCompact(collateral)} of this category already counts toward your credit line.` : ""}`;
   } else {
-    const l = g.all.find((x) => x.id === sel.id) ?? g.leaves[0];
+    const l = leaf!;
     const meta = CAT_META[l.cat];
     const src = s.sources.find((x) => x.id === l.sourceId);
     kicker = <><meta.icon size={18} color={meta.color} /> {l.institution}</>;
     title = l.name;
     subtitle = `${meta.label}${l.onchain ? " · on-chain" : " · off-chain, read-only"}`;
     statusPill = l.missing ? <StatusPill tone="bad">Missing</StatusPill> : <StatusPill tone="good">{l.onchain ? "On-chain" : "Connected"}</StatusPill>;
-    statusText = l.onchain ? <>Read live from the Prism wallet {short(s.chain.wallet.address)}.</> : src ? <>Synced {timeAgo(src.lastSync)} via {src.connectMethod.toLowerCase()}.</> : <>No policy on file.</>;
+    statusText = l.onchain ? <>Read live from the Halo wallet {short(s.chain.wallet.address)}.</> : src ? <>Synced {timeAgo(src.lastSync)} via {src.connectMethod.toLowerCase()}.</> : <>Entered manually.</>;
     explore = l.onchain ? { label: "Open credit", onClick: () => go("credit") } : { label: "Open accounts", onClick: () => go("accounts") };
     const series = seededTrend(l.id, Math.max(1, Math.abs(l.value) || 1), 28, l.riskLevel === "high" ? 0.06 : 0.015);
     metric = {
       label: l.kind === "debt" ? "Balance owed" : l.kind === "policy" ? "Coverage" : "Position value",
-      value: l.missing ? "None" : usdCompact(Math.abs(l.value)),
+      value: l.missing ? "None" : usdCompact(Math.abs(shocked(l, sim))),
       delta: l.missing ? null : ((series[series.length - 1] - series[series.length - 3]) / series[series.length - 3]) * 100,
-      badge: l.riskLevel === "high" ? "High risk" : l.riskLevel === "medium" ? "Medium" : "Low risk",
+      badge: l.riskLevel === "high" ? "High risk" : l.riskLevel === "medium" ? "Medium risk" : "Low risk",
       series,
     };
     tiles =
@@ -641,7 +743,7 @@ function Panel({ g, sel, setSel }: { g: ReturnType<typeof buildGraph>; sel: Sel;
         ? [
             <Tile key="1" icon={<Clock size={20} />} value={l.encumbered ? "Locked" : liquidityLabel(l.liquidityDays)} label="Time to cash" />,
             <Tile key="2" icon={<CircleCheck size={20} />} value={l.haircutPct === undefined ? "n/a" : `${l.haircutPct}%`} label="Counts as collateral" />,
-            <Tile key="3" icon={<Layers size={20} />} value={`${((l.value / s.risk.totals.netWorth) * 100).toFixed(1)}%`} label="Of net worth" />,
+            <Tile key="3" icon={<Layers size={20} />} value={`${((l.value / Math.max(1, s.risk.totals.netWorth)) * 100).toFixed(1)}%`} label="Of net worth" />,
             <Tile key="4" icon={l.behavior === "income" ? <TrendingUp size={20} /> : <Minus size={20} />} value={l.apyPct ? `${l.apyPct}%` : "0%"} label="Yield" />,
           ]
         : l.kind === "debt"
@@ -657,24 +759,8 @@ function Panel({ g, sel, setSel }: { g: ReturnType<typeof buildGraph>; sel: Sel;
               <Tile key="3" icon={<Layers size={20} />} value={l.onchain ? "Parametric" : "Classic"} label="Type" />,
               <Tile key="4" icon={<Zap size={20} />} value={l.onchain ? "Agent" : "You"} label="Who can act" />,
             ];
-    const specific: Record<string, string[]> = { "nw-card": ["debt-nw-card"], "md-term": ["dgs-Meridian"], "nw-car": ["drains"], "oc-loan": ["loan-health", "proof", "drains"] };
-    items = byPrefix(specific[l.id] ?? CAT_FINDINGS[l.cat]).slice(0, 3);
-    const w = s.chain.wallet;
-    const idle = Math.floor(w.usdc - s.mandate.minWalletReserveUsd);
-    if (l.id === "oc-usdc" && idle > 10) {
-      quick.push({ label: `Park ${usdCompact(idle)} in the vault`, action: { kind: "vault_deposit", amountUsd: idle }, reason: "From the wealth map" });
-      if (s.chain.loan.debt > 1) quick.push({ label: `Repay ${usdCompact(Math.min(idle, s.chain.loan.debt))}`, action: { kind: "repay", amountUsd: Math.min(idle, s.chain.loan.debt) }, reason: "From the wealth map" });
-    }
-    if (l.id === "oc-weth" && w.weth > 0.001) quick.push({ label: `Add ${w.weth.toFixed(2)} ETH as collateral`, action: { kind: "deposit_collateral", amountEth: Math.floor(w.weth * 1e4) / 1e4 }, reason: "From the wealth map" });
-    if (l.id === "oc-collateral" && !s.chain.cover.some((x) => x.active)) quick.push({ label: "Buy liquidation cover", action: { kind: "buy_cover", coverUsd: Math.max(500, Math.ceil((s.chain.loan.debt * 0.1) / 100) * 100), days: 90 }, reason: "From the wealth map" });
-    if (l.id === "oc-vault" && w.vault > 1) quick.push({ label: "Withdraw all to wallet", action: { kind: "vault_withdraw", amountUsd: w.vault + 1 }, reason: "From the wealth map" });
-    if (l.id === "oc-loan") {
-      if (!s.chain.attestation.active && s.credit.eligible) quick.push({ label: "Publish proof (cheaper rate)", action: { kind: "refresh_attestation" }, reason: "From the wealth map" });
-      if (w.usdc > 100) quick.push({ label: `Repay ${usdCompact(Math.min(1000, w.usdc - 1))}`, action: { kind: "repay", amountUsd: Math.min(1000, Math.floor(w.usdc - 1)) }, reason: "From the wealth map" });
-    }
-    const cover = s.chain.cover.find((x) => `cover-${x.id}` === l.id && x.claimable > 0);
-    if (cover) quick.push({ label: `Claim ${usd(cover.claimable)}`, action: { kind: "claim_cover", policyId: cover.id }, reason: "From the wealth map" });
-    if (!l.onchain) note = "Off-chain and read-only: Prism analyses this position and suggests steps, and you carry them out.";
+    quick = quickActionsFor(l, s);
+    if (!l.onchain) note = "Off-chain and read-only: Halo analyses this position and suggests steps, and you carry them out.";
   }
 
   return (
@@ -689,15 +775,20 @@ function Panel({ g, sel, setSel }: { g: ReturnType<typeof buildGraph>; sel: Sel;
             {statusPill}
             <p>{statusText}</p>
           </div>
-          <button className="btn sm" onClick={explore.onClick}>
-            {explore.label} <ChevronRight size={14} />
-          </button>
+          <div className="stack-sm" style={{ gap: 6 }}>
+            <button className="btn sm lime" onClick={() => onDive(target)}>
+              <Maximize2 size={13} /> Dive deeper
+            </button>
+            <button className="btn sm" onClick={explore.onClick}>
+              {explore.label} <ChevronRight size={14} />
+            </button>
+          </div>
         </div>
 
         <div className="metric-card">
           <div className="between">
             <span className="mc-l">{metric.label}</span>
-            <span className="badge-outline">{metric.badge}</span>
+            {metric.badge && <span className="badge-outline">{metric.badge}</span>}
           </div>
           <div className="metric-row">
             <div>
@@ -744,7 +835,7 @@ function Panel({ g, sel, setSel }: { g: ReturnType<typeof buildGraph>; sel: Sel;
           ))}
           {note && <div className="analysis-item"><p>{note}</p></div>}
           {sel.type !== "root" && (
-            <button className="btn ghost sm" onClick={() => setSel({ type: "root" })}>
+            <button className="btn ghost sm" onClick={() => onPick({ kind: "orb" })}>
               Back to whole portfolio
             </button>
           )}
@@ -776,7 +867,7 @@ function Panel({ g, sel, setSel }: { g: ReturnType<typeof buildGraph>; sel: Sel;
           </button>
         </form>
         <div className="ask-chips">
-          <span className="chip-btn"><Bot size={14} /> {s.llm.enabled ? "Claude agent" : "My agent (offline)"}</span>
+          <span className="chip-btn"><Bot size={14} /> {s.llm.enabled ? `${s.llm.provider} agent` : "My agent (offline)"}</span>
           <button className="chip-btn" onClick={() => go("agent")} title="Approvals waiting">
             <Clock size={14} /> {pending ? `+${pending}` : "0"}
           </button>
@@ -791,11 +882,40 @@ function Panel({ g, sel, setSel }: { g: ReturnType<typeof buildGraph>; sel: Sel;
 
 // ======================================================================= page
 
+function headlineFor(s: AppState, g: Graph, map: MapUi, sim: SimValues, filtered: boolean) {
+  if (map.balance === "true") return { label: "True balance", value: s.risk.totals.trueBalance, note: "reachable in a week − all debts", negative: s.risk.totals.trueBalance < 0 };
+  const visible = g.leaves.filter((l) => l.kind !== "policy").reduce((a, l) => a + shocked(l, sim), 0);
+  if (filtered) return { label: "Net worth (filtered)", value: visible, note: "only the categories shown" };
+  if (sim) {
+    const d = ((visible - s.risk.totals.netWorth) / s.risk.totals.netWorth) * 100;
+    return { label: "Net worth", value: visible, note: `${signedPct(d)} in simulation`, negative: visible < 0 };
+  }
+  return { label: "Net worth", value: s.risk.totals.netWorth };
+}
+
 export function WealthMap() {
-  const { s, map, sim, setSim, openSim } = useApp();
+  const { s, map, sim: simState, setSim, openSim, go, run } = useApp();
   const [sel, setSel] = useState<Sel>({ type: "root" });
+  const [brief, setBrief] = useState<Target | null>(null);
+  const [dive, setDive] = useState<Target | null>(null);
+  const [prefs, setPrefsState] = useState<MapPrefs>(loadPrefs);
   const [stageRef, stage] = useSize<HTMLDivElement>();
   const g = useMemo(() => buildGraph(s, { sort: map.sort, hidden: map.hidden, source: map.source }), [s, map.sort, map.hidden, map.source]);
+  const sim = useMemo(() => simValues(simState?.result), [simState]);
+  const filtered = map.hidden.length > 0 || map.source !== "all";
+  const headline = headlineFor(s, g, map, sim, filtered);
+  const n = counts(g);
+
+  const setPrefs = useCallback((f: (p: MapPrefs) => MapPrefs) => {
+    setPrefsState((p) => {
+      const next = f(p);
+      savePrefs(next);
+      return next;
+    });
+  }, []);
+  useEffect(() => {
+    if (map.resetLayout) setPrefs((p) => ({ ...p, offsets: {} }));
+  }, [map.resetLayout, setPrefs]);
 
   // If the selection disappears (filter, disconnect), fall back to the whole portfolio.
   useEffect(() => {
@@ -808,9 +928,22 @@ export function WealthMap() {
     const q = map.query.trim().toLowerCase();
     if (!q) return;
     const hit = g.leaves.find((l) => `${l.name} ${l.institution}`.toLowerCase().includes(q));
-    if (hit && map.searchSubmit) setSel({ type: "leaf", id: hit.id });
+    if (hit && map.searchSubmit) {
+      setSel({ type: "leaf", id: hit.id });
+      setBrief({ kind: "leaf", id: hit.id });
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [map.searchSubmit]);
+
+  const pick = (t: Target) => {
+    setSel(t.kind === "orb" ? { type: "root" } : t.kind === "cat" ? { type: "cat", id: t.id } : { type: "leaf", id: t.id });
+    setBrief((b) => (b && JSON.stringify(b) === JSON.stringify(t) ? null : t));
+  };
+  const openDive = (t: Target) => {
+    setBrief(null);
+    setSel(t.kind === "orb" ? { type: "root" } : t.kind === "cat" ? { type: "cat", id: t.id } : { type: "leaf", id: t.id });
+    setDive(t);
+  };
 
   const narrow = stage.w > 0 && stage.w < 700;
   const view: MapUi["view"] = narrow ? "tree" : map.view;
@@ -819,22 +952,27 @@ export function WealthMap() {
     <div className="map-page">
       <section className="stage" ref={stageRef}>
         <div className="stage-pill">
-          Wealth map · {s.sources.filter((x) => x.connected).length + 1} sources · {g.leaves.length} positions <span className="live-dot" />
+          {s.sources.filter((x) => x.connected).length + 1} sources · {n.assets} positions · {n.debts} debts · {n.policies} policies <span className="live-dot" />
         </div>
-        {sim && (
+        {simState && (
           <div className="sim-banner">
             <b>Simulation preview</b>
             <span className="num">
-              Equities {sim.equitiesPct}% · ETH {sim.cryptoPct}% · private {sim.privatePct}% · EUR {sim.eurUsdPct}%
+              {signedPct(simState.result.deltaPct)} net worth{simState.input.custom?.length ? ` · ${simState.input.custom.length} custom parameter${simState.input.custom.length > 1 ? "s" : ""}` : ""}
             </span>
             <button className="btn sm" onClick={openSim}>Edit</button>
             <button className="btn sm ghost" onClick={() => setSim(null)}>Clear</button>
           </div>
         )}
-        {view === "graph" ? <Graph g={g} sel={sel} setSel={setSel} /> : <TreeView g={g} sel={sel} setSel={setSel} />}
+        {view === "graph" ? (
+          <Graph g={g} sel={sel} onPick={pick} prefs={prefs} setPrefs={setPrefs} brief={brief} setBrief={setBrief} onDive={openDive} sim={sim} headline={headline} />
+        ) : (
+          <TreeView g={g} sel={sel} onPick={(t) => { pick(t); setBrief(null); }} sim={sim} />
+        )}
         {narrow && <div className="muted" style={{ fontSize: 12, padding: "8px 4px" }}>The graph needs a wider window; showing the tree view.</div>}
       </section>
-      <Panel g={g} sel={sel} setSel={setSel} />
+      <Panel g={g} sel={sel} onPick={(t) => { pick(t); setBrief(null); }} onDive={openDive} sim={sim} headline={headline.value} />
+      {dive && <DeepDive t={dive} g={g} s={s} sim={sim} onClose={() => setDive(null)} onSelect={(t) => openDive(t)} go={go} run={run} />}
     </div>
   );
 }

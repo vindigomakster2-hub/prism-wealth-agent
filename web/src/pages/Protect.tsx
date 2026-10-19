@@ -123,7 +123,7 @@ export function Protect() {
             </div>
           )}
           <p className="muted" style={{ fontSize: 12, marginBottom: 0 }}>
-            Prism doesn't sell insurance. Off-chain recommendations are decision support, not licensed advice.
+            Halo doesn't sell insurance. Off-chain recommendations are decision support, not licensed advice.
           </p>
         </div>
       </div>

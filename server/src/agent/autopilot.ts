@@ -6,7 +6,7 @@ import type { Proposal, TypedAction } from "./types.js";
 
 /**
  * Fast path. The LLM is too slow (and too non-deterministic) for liquidation races, so protective
- * playbooks are plain code that the user pre-authorises through the mandate. Claude handles the
+ * playbooks are plain code that the user pre-authorises through the mandate. The LLM handles the
  * slow path: explaining, planning, and anything that needs judgement.
  */
 

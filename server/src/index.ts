@@ -1,12 +1,13 @@
+import "./env.js";
 import cors from "cors";
 import express, { type NextFunction, type Request, type Response } from "express";
-import { LLM_ENABLED, LLM_MODEL, PORT, TICK_MS } from "./config.js";
+import { LLM_ENABLED, LLM_MODEL, PORT, TICK_MS, VISION_MODEL } from "./config.js";
 import { ensureWorld, errorReason, ownerCall } from "./chain.js";
-import { persona } from "./data/persona.js";
-import { stressTest } from "./engine/risk.js";
+import { persona, updatePersona } from "./data/persona.js";
+import { parseStress, stressTargets, stressTest } from "./engine/risk.js";
 import { tick } from "./agent/autopilot.js";
 import { chatWithRules } from "./agent/fallback.js";
-import { chatWithClaude, resetChat } from "./agent/llm.js";
+import { chatWithLLM, resetChat } from "./agent/llm.js";
 import { approveProposal, parseAction, propose, rejectProposal } from "./agent/pipeline.js";
 import type { Mandate } from "./agent/types.js";
 import { crashEth, initPayees, injectAttack, recoverPrice, resetWorld, setPrice, warp } from "./demo.js";
@@ -15,7 +16,7 @@ import { logEvent, newId, store } from "./store.js";
 import { answer, cashState, initCash, syncNow } from "./cashflow/engine.js";
 import { registerCashRoutes } from "./cashflow/routes.js";
 import { cash, resetCash } from "./cashflow/state.js";
-import { askOnTelegram, startTelegram } from "./cashflow/telegram.js";
+import { askOnTelegram, notifyTelegram, setTelegramPrefs, startTelegram } from "./cashflow/telegram.js";
 import { feedQueue } from "./cashflow/seed.js";
 
 const app = express();
@@ -23,7 +24,7 @@ const app = express();
 // The API can move money, so only the local app may call it.
 // Host check blocks DNS-rebinding; the origin allow-list stops other websites in the same browser.
 const LOCAL = /^(localhost|127\.0\.0\.1|\[::1\])(:\d+)?$/i;
-const extraHosts = (process.env.PRISM_ALLOWED_HOSTS ?? "").split(",").map((h) => h.trim().toLowerCase()).filter(Boolean);
+const extraHosts = (process.env.HALO_ALLOWED_HOSTS ?? "").split(",").map((h) => h.trim().toLowerCase()).filter(Boolean);
 app.use((req, res, next) => {
   const host = String(req.headers.host ?? "").toLowerCase();
   if (LOCAL.test(host) || extraHosts.includes(host.replace(/:\d+$/, ""))) return next();
@@ -109,7 +110,8 @@ app.get(
     const { chain, risk, credit } = await snapshotState();
     return {
       persona,
-      llm: { enabled: LLM_ENABLED, model: LLM_MODEL },
+      llm: { enabled: LLM_ENABLED, model: LLM_MODEL, provider: "Groq", vision: Boolean(VISION_MODEL) },
+      settings: store.settings,
       sources: store.sources.map((s) => ({
         ...s,
         transactions: s.transactions.slice(0, 8),
@@ -144,9 +146,9 @@ app.get(
   wrap(async (_req, res) => {
     const { chain, risk, credit } = await snapshotState();
     const stamp = new Date().toISOString().replace(/[:.]/g, "-");
-    res.setHeader("Content-Disposition", `attachment; filename="prism-backup-${stamp}.json"`);
+    res.setHeader("Content-Disposition", `attachment; filename="halo-backup-${stamp}.json"`);
     return {
-      format: "prism-backup",
+      format: "halo-backup",
       version: 1,
       exportedAt: new Date().toISOString(),
       persona,
@@ -265,13 +267,43 @@ app.post(
   "/api/stress",
   wrap(async (req) => {
     const { chain, risk } = await snapshotState();
-    const b = req.body ?? {};
-    return stressTest(risk.holdings, risk.liabilities, chain, {
-      equitiesPct: Number(b.equitiesPct ?? 0),
-      cryptoPct: Number(b.cryptoPct ?? 0),
-      privatePct: Number(b.privatePct ?? 0),
-      eurUsdPct: Number(b.eurUsdPct ?? 0),
+    return stressTest(risk.holdings, risk.liabilities, chain, parseStress(req.body ?? {}));
+  }),
+);
+
+app.get(
+  "/api/stress/targets",
+  wrap(async () => {
+    const { risk } = await snapshotState();
+    return stressTargets(risk.holdings, risk.liabilities);
+  }),
+);
+
+app.get("/api/scenarios", wrap(() => store.scenarios));
+app.put(
+  "/api/scenarios",
+  wrap((req) => {
+    const list = Array.isArray(req.body?.scenarios) ? req.body.scenarios : null;
+    if (!list) throw Object.assign(new Error("scenarios must be an array"), { status: 400 });
+    store.scenarios = list.slice(0, 30).map((x: Record<string, unknown>, i: number) => {
+      const name = String(x.name ?? "").trim().slice(0, 60);
+      if (!name) throw Object.assign(new Error("Every scenario needs a name"), { status: 400 });
+      return { id: String(x.id || `s${Date.now()}-${i}`), name, builtIn: Boolean(x.builtIn), input: parseStress((x.input ?? {}) as Record<string, unknown>) };
     });
+    return store.scenarios;
+  }),
+);
+
+app.put("/api/profile", wrap((req) => updatePersona(req.body ?? {})));
+app.get("/api/settings", wrap(() => store.settings));
+app.put(
+  "/api/settings",
+  wrap((req) => {
+    const b = req.body ?? {};
+    if (b.telegramQuestions !== undefined) store.settings.telegramQuestions = Boolean(b.telegramQuestions);
+    if (b.telegramAlerts !== undefined) store.settings.telegramAlerts = Boolean(b.telegramAlerts);
+    setTelegramPrefs({ questions: store.settings.telegramQuestions, alerts: store.settings.telegramAlerts });
+    return store.settings;
   }),
 );
 
@@ -282,15 +314,15 @@ app.post(
     if (!message) throw Object.assign(new Error("Empty message"), { status: 400 });
     store.chatLog.push({ id: newId(), role: "user", text: message, at: Date.now(), proposalIds: [] });
     let reply: { text: string; proposalIds: string[] };
-    let engine: "claude" | "rules" = "rules";
+    let engine: "llm" | "rules" = "rules";
     if (LLM_ENABLED) {
       try {
-        reply = await chatWithClaude(message);
-        engine = "claude";
+        reply = await chatWithLLM(message);
+        engine = "llm";
       } catch (e) {
-        console.error("[claude]", e);
+        console.error("[llm]", e);
         reply = await chatWithRules(message);
-        reply.text = `_Claude is unavailable (${errorReason(e)}), so this answer comes from offline mode._\n\n${reply.text}`;
+        reply.text = `_The AI provider is unavailable (${errorReason(e)}), so this answer comes from offline mode._\n\n${reply.text}`;
       }
     } else {
       reply = await chatWithRules(message);
@@ -340,7 +372,7 @@ app.use((err: unknown, _req: Request, res: Response, _next: NextFunction) => {
 });
 
 app.listen(PORT, "127.0.0.1", () => {
-  console.log(`[server] Prism API on http://127.0.0.1:${PORT} (LLM: ${LLM_ENABLED ? LLM_MODEL : "offline rules"})`);
+  console.log(`[server] Halo API on http://127.0.0.1:${PORT} (LLM: ${LLM_ENABLED ? LLM_MODEL : "offline rules"})`);
 });
 
 (async () => {
@@ -360,6 +392,12 @@ app.listen(PORT, "127.0.0.1", () => {
     // Bank auto-sync: the demo feed releases one new transaction every 15 s while enabled.
     setInterval(() => {
       if (cash.autoSync && cash.feedCursor < feedQueue().length) syncNow(1);
+      // Proactive alerts: each new insight goes to Telegram once (if linked and enabled in Settings).
+      for (const i of cashState().insights) {
+        if (i.kind === "review" || store.alertedInsights.has(i.id)) continue;
+        store.alertedInsights.add(i.id);
+        void notifyTelegram(`💡 ${i.title}\n${i.detail}`);
+      }
     }, 15_000);
     logEvent({ kind: "system", title: reused ? "Reconnected to the local chain" : "Contracts deployed and demo state seeded" });
     console.log(`[server] world ${reused ? "reused" : "deployed"}; autopilot every ${TICK_MS} ms`);

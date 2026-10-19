@@ -113,9 +113,9 @@ export function Agent() {
         <div className="card chat">
           <div className="card-head">
             <div>
-              <h3 className="card-title"><Bot size={18} /> Prism agent</h3>
+              <h3 className="card-title"><Bot size={18} /> Halo agent</h3>
               <div className="card-sub">
-                {s.llm.enabled ? `Claude (${s.llm.model}) with read tools and one action tool` : "Offline mode: set ANTHROPIC_API_KEY to talk to Claude"}
+                {s.llm.enabled ? `${s.llm.provider} · ${s.llm.model}, with read tools and one action tool` : "Offline mode: set GROQ_API_KEY to switch on the AI agent"}
               </div>
             </div>
             <button className="btn sm ghost" onClick={() => api.chatReset().then(refresh)}>

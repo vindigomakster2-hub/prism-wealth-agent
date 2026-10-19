@@ -1,9 +1,9 @@
 import type { ActivityEvent, Mandate, Payee, Proposal, TypedAction } from "../../server/src/agent/types";
 import type { Source } from "../../server/src/data/persona";
 import type { OnchainState } from "../../server/src/chain";
-import type { RiskReport, StressInput } from "../../server/src/engine/risk";
+import type { RiskReport, StressInput, StressParam, stressTargets, stressTest } from "../../server/src/engine/risk";
 import type { CreditProfile } from "../../server/src/engine/credit";
-import type { ChatTurn } from "../../server/src/store";
+import type { ChatTurn, Scenario, Settings } from "../../server/src/store";
 
 import type { cashState, previewCsv } from "../../server/src/cashflow/engine";
 import type { CashTxn, ReceiptDraft, SpendCat } from "../../server/src/cashflow/state";
@@ -12,6 +12,9 @@ export type { ActivityEvent, ChatTurn, CreditProfile, Mandate, OnchainState, Pay
 export type { CashTxn, ReceiptDraft, SpendCat };
 export type CashState = ReturnType<typeof cashState>;
 export type CsvPreview = ReturnType<typeof previewCsv>;
+export type StressResult = ReturnType<typeof stressTest>;
+export type StressTargets = ReturnType<typeof stressTargets>;
+export type { Scenario, Settings, StressParam };
 
 export interface AppState {
   persona: {
@@ -23,8 +26,13 @@ export interface AppState {
     monthlyIncome: number;
     monthlyExpenses: number;
     walletAgeYears: number;
+    email: string;
+    country: string;
+    memberSince: string;
+    baseCurrency: string;
   };
-  llm: { enabled: boolean; model: string };
+  llm: { enabled: boolean; model: string; provider: string; vision: boolean };
+  settings: Settings;
   sources: Array<Source & { total: number }>;
   chain: OnchainState;
   risk: RiskReport;
@@ -45,19 +53,6 @@ export interface AppState {
     offchainDailyTransferUsd: number;
     healthFloor: number;
   };
-}
-
-export interface StressResult {
-  before: number;
-  after: number;
-  delta: number;
-  deltaPct: number;
-  byGroup: Array<{ group: string; delta: number }>;
-  ethPriceAfter: number;
-  hfBefore: number | null;
-  hfAfter: number | null;
-  liquidation: boolean;
-  twinHfAfter: number | null;
 }
 
 async function request<T>(method: string, path: string, body?: unknown): Promise<T> {
@@ -109,4 +104,9 @@ export const api = {
   deleteAsset: (id: string) => request("DELETE", `/cash/assets/${id}`),
   dismissInsight: (id: string) => request("POST", `/cash/insights/${encodeURIComponent(id)}/dismiss`),
   deleteAll: () => request("POST", "/privacy/delete-all"),
+  stressTargets: () => request<StressTargets>("GET", "/stress/targets"),
+  scenarios: () => request<Scenario[]>("GET", "/scenarios"),
+  saveScenarios: (scenarios: Scenario[]) => request<Scenario[]>("PUT", "/scenarios", { scenarios }),
+  profile: (p: Partial<AppState["persona"]>) => request<AppState["persona"]>("PUT", "/profile", p),
+  settings: (p: Partial<Settings>) => request<Settings>("PUT", "/settings", p),
 };

@@ -46,7 +46,7 @@ export async function askOnTelegram(t: CashTxn): Promise<boolean> {
   const text = `🤔 ${t.question.text}`;
   const buttons = t.question.options.map((o) => ({ label: o.label, data: `c|${t.id}|${o.category}` }));
   remember(text, buttons);
-  if (!TOKEN || !tg.chatId) return false;
+  if (!TOKEN || !tg.chatId || !prefs.questions) return false;
   try {
     await call("sendMessage", {
       chat_id: tg.chatId,
@@ -61,10 +61,19 @@ export async function askOnTelegram(t: CashTxn): Promise<boolean> {
   }
 }
 
+/** One-way alerts (insights). Only sent for real; not mirrored, so the in-app preview stays focused on questions. */
 export async function notifyTelegram(text: string) {
-  remember(text, []);
-  if (!TOKEN || !tg.chatId) return;
-  await call("sendMessage", { chat_id: tg.chatId, text }).catch((e) => (tg.lastError = String(e)));
+  if (!TOKEN || !tg.chatId || !prefs.alerts) return;
+  await call("sendMessage", { chat_id: tg.chatId, text })
+    .then(() => tg.sent++)
+    .catch((e) => (tg.lastError = String(e)));
+}
+
+const prefs = { questions: true, alerts: true };
+/** Mirrors Settings → Notifications. */
+export function setTelegramPrefs(p: { questions: boolean; alerts: boolean }) {
+  prefs.questions = p.questions;
+  prefs.alerts = p.alerts;
 }
 
 /** Marks a question as answered in the in-app mirror (answers can arrive from either side). */
@@ -82,7 +91,7 @@ async function handle(u: Update) {
   if (u.message?.text?.startsWith("/start")) {
     if (tg.chatId && String(u.message.chat.id) !== tg.chatId) return;
     tg.chatId = String(u.message.chat.id);
-    await call("sendMessage", { chat_id: tg.chatId, text: "Prism is linked ✅ I'll ask here when a transaction is unclear. Tap an answer and I'll remember it for that merchant." });
+    await call("sendMessage", { chat_id: tg.chatId, text: "Halo is linked ✅ I'll ask here when a transaction is unclear. Tap an answer and I'll remember it for that merchant." });
     await onStart?.();
     return;
   }

@@ -2,6 +2,7 @@ import type { OnchainState } from "../chain.js";
 import { persona, type AssetClass, type Sector, type Source } from "../data/persona.js";
 import type { TypedAction } from "../agent/types.js";
 import { cash, toUsd } from "../cashflow/state.js";
+import { REGION_LABEL, SECTOR_LABEL, computeExposure, profileOf } from "./exposure.js";
 
 export type Group = "Cash & deposits" | "Public equities" | "Bonds & T-bills" | "Private & venture" | "Crypto" | "Real assets & other";
 
@@ -15,6 +16,7 @@ export interface UHolding {
   valueUsd: number;
   currency: string;
   selfReported?: boolean;
+  ticker?: string;
   liquidityDays: number;
   sector: Sector | "crypto";
   onchain: boolean;
@@ -66,6 +68,7 @@ export interface ULiability {
   aprPct: number;
   monthlyPayment: number;
   onchain: boolean;
+  currency?: string;
 }
 
 export interface Finding {
@@ -79,11 +82,27 @@ export interface Finding {
   action?: TypedAction;
 }
 
+export type StressKind = "group" | "sector" | "region" | "currency" | "institution" | "position";
+
+/** A user-defined shock: "everything in <kind> = <target> moves by <pct>%". Sector/region shocks are look-through weighted. */
+export interface StressParam {
+  id?: string;
+  kind: StressKind;
+  target: string;
+  pct: number;
+  label?: string;
+}
+
 export interface StressInput {
   equitiesPct: number;
   cryptoPct: number;
   privatePct: number;
   eurUsdPct: number;
+  /** Parallel interest-rate move in basis points: reprices bonds by duration and changes variable interest. */
+  ratesBps?: number;
+  /** Change in monthly income, e.g. -100 for job loss. Drives the runway estimate. */
+  incomePct?: number;
+  custom?: StressParam[];
 }
 
 const GROUP_OF: Record<string, Group> = {
@@ -124,6 +143,7 @@ export function unifyHoldings(sources: Source[], chain: OnchainState): { holding
         sector: h.sector,
         onchain: false,
         apyPct: h.apyPct,
+        ticker: h.ticker,
         riskLevel: RISK_OF[h.assetClass],
         behavior: h.apyPct ? "income" : "neutral",
         selfReported: s.selfReported,
@@ -162,6 +182,7 @@ export function unifyHoldings(sources: Source[], chain: OnchainState): { holding
       aprPct: d.aprPct,
       monthlyPayment: toUsd(d.monthlyPayment, d.currency),
       onchain: false,
+      currency: d.currency,
     });
   }
   const p = chain.ethPrice;
@@ -170,7 +191,7 @@ export function unifyHoldings(sources: Source[], chain: OnchainState): { holding
       holdings.push({
         ...h,
         sourceId: "onchain",
-        sourceName: "Prism wallet",
+        sourceName: "Halo wallet",
         onchain: true,
         group: GROUP_OF[h.assetClass],
         riskLevel: RISK_OF[h.assetClass],
@@ -186,7 +207,7 @@ export function unifyHoldings(sources: Source[], chain: OnchainState): { holding
     liabilities.push({
       id: "oc-loan",
       name: "Hybrid credit line (USDC)",
-      sourceName: "Prism wallet",
+      sourceName: "Halo wallet",
       balanceUsd: chain.loan.debt,
       aprPct: chain.loan.rateBps / 100,
       monthlyPayment: (chain.loan.debt * chain.loan.rateBps) / 10000 / 12,
@@ -208,29 +229,87 @@ function hfAfterPrice(chain: OnchainState, newPrice: number): number | null {
   return (coll * 0.8 + Math.min(l.attestedCreditLine, coll * 0.5)) / l.debt;
 }
 
-export function stressTest(holdings: UHolding[], liabilities: ULiability[], chain: OnchainState, s: StressInput) {
-  const shock = (h: UHolding) => {
-    if (h.group === "Crypto") return s.cryptoPct;
-    if (h.group === "Public equities") return h.sector === "tech" ? s.equitiesPct * 1.25 : s.equitiesPct;
-    if (h.group === "Private & venture") return s.privatePct;
-    if (h.currency === "EUR") return s.eurUsdPct;
-    if (h.group === "Bonds & T-bills") return -s.equitiesPct * 0.15; // flight to quality
-    return 0;
-  };
-  const totalDebt = sum(liabilities.map((l) => l.balanceUsd));
-  const before = sum(holdings.map((h) => h.valueUsd)) - totalDebt;
-  const groups = new Map<string, number>();
-  let after = -totalDebt;
-  for (const h of holdings) {
-    const d = (h.valueUsd * shock(h)) / 100;
-    after += h.valueUsd + d;
-    groups.set(h.group, (groups.get(h.group) ?? 0) + d);
+/** Approximate interest-rate duration (years) used to reprice bond-like holdings. */
+function durationOf(h: UHolding): number {
+  if (h.assetClass === "tbill") return 0.25;
+  if (h.assetClass === "bond_fund") return /20y|tlt|long/i.test(`${h.name} ${h.ticker ?? ""}`) ? 16 : 7;
+  return 0;
+}
+
+function matches(p: StressParam, h: UHolding): number {
+  switch (p.kind) {
+    case "group":
+      return h.group === p.target ? 1 : 0;
+    case "sector":
+      return profileOf(h).sector[p.target] ?? 0;
+    case "region":
+      return profileOf(h).region[p.target] ?? 0;
+    case "currency":
+      return h.currency === p.target ? 1 : 0;
+    case "institution":
+      return h.sourceName === p.target ? 1 : 0;
+    case "position":
+      return h.id === p.target ? 1 : 0;
   }
-  const newPrice = chain.ethPrice * (1 + s.cryptoPct / 100);
+}
+
+export function stressTest(holdings: UHolding[], liabilities: ULiability[], chain: OnchainState, s: StressInput) {
+  const rates = s.ratesBps ?? 0;
+  const custom = s.custom ?? [];
+  const multiplier = (h: UHolding) => {
+    let m = 1;
+    if (h.group === "Crypto") m *= 1 + s.cryptoPct / 100;
+    else if (h.group === "Public equities") m *= 1 + (s.equitiesPct * (1 + 0.25 * (profileOf(h).sector.technology ?? 0))) / 100;
+    else if (h.group === "Private & venture") m *= 1 + s.privatePct / 100;
+    else if (h.group === "Bonds & T-bills") m *= 1 - (s.equitiesPct * 0.15) / 100; // flight to quality
+    if (h.currency === "EUR") m *= 1 + s.eurUsdPct / 100;
+    const d = durationOf(h);
+    if (d && rates) m *= 1 - (d * rates) / 10000;
+    for (const p of custom) {
+      const w = matches(p, h);
+      if (w) m *= 1 + (p.pct / 100) * w;
+    }
+    return Math.max(0, m);
+  };
+  const debtMultiplier = (l: ULiability) => {
+    let m = 1;
+    for (const p of custom) {
+      if ((p.kind === "currency" && (l.currency ?? "USD") === p.target) || (p.kind === "position" && l.id === p.target)) m *= 1 + p.pct / 100;
+    }
+    return Math.max(0, m);
+  };
+
+  const byHolding = holdings.map((h) => ({ id: h.id, name: h.name, group: h.group, before: h.valueUsd, after: h.valueUsd * multiplier(h) }));
+  const byLiability = liabilities.map((l) => ({ id: l.id, name: l.name, before: l.balanceUsd, after: l.balanceUsd * debtMultiplier(l) }));
+  const debtBefore = sum(byLiability.map((l) => l.before));
+  const debtAfter = sum(byLiability.map((l) => l.after));
+  const before = sum(byHolding.map((h) => h.before)) - debtBefore;
+  const after = sum(byHolding.map((h) => h.after)) - debtAfter;
+  const groups = new Map<string, number>();
+  for (const h of byHolding) groups.set(h.group, (groups.get(h.group) ?? 0) + h.after - h.before);
+  if (debtAfter !== debtBefore) groups.set("Debts", debtBefore - debtAfter);
+
+  // On-chain loan: the collateral's simulated move sets the ETH price for health factors.
+  const coll = byHolding.find((h) => h.id === "oc-collateral");
+  const ethMove = coll && coll.before > 0 ? coll.after / coll.before : 1 + s.cryptoPct / 100;
+  const newPrice = chain.ethPrice * ethMove;
   const hfAfter = hfAfterPrice(chain, newPrice);
   const tl = chain.twin.loan;
-  const twinColl = tl.collateralEth * newPrice;
-  const twinHfAfter = tl.debt > 0 ? (twinColl * 0.8) / tl.debt : null;
+  const twinHfAfter = tl.debt > 0 ? (tl.collateralEth * newPrice * 0.8) / tl.debt : null;
+
+  // Cash flow: variable-rate debt and deposits reprice with rates; income shock sets runway.
+  const variableDebt = liabilities.filter((l) => !/mortgage|car loan|auto/i.test(l.name));
+  const interestDeltaUsd = (sum(variableDebt.map((l) => l.balanceUsd)) * rates) / 10000;
+  const depositIncomeDeltaUsd = (sum(holdings.filter((h) => h.behavior === "income" && h.liquidityDays <= 30).map((h) => h.valueUsd)) * rates) / 10000;
+  const income = persona.monthlyIncome * (1 + (s.incomePct ?? 0) / 100);
+  const outgoings = persona.monthlyExpenses + sum(liabilities.map((l) => l.monthlyPayment)) + interestDeltaUsd / 12;
+  const monthlyGapUsd = outgoings - income;
+  const liquidAfter = sum(byHolding.filter((h) => {
+    const src = holdings.find((x) => x.id === h.id)!;
+    return !src.encumbered && src.liquidityDays <= 7;
+  }).map((h) => h.after));
+  const runwayMonths = monthlyGapUsd > 0 ? liquidAfter / monthlyGapUsd : null;
+
   return {
     input: s,
     before,
@@ -238,11 +317,49 @@ export function stressTest(holdings: UHolding[], liabilities: ULiability[], chai
     delta: after - before,
     deltaPct: pct(after - before, before),
     byGroup: [...groups.entries()].map(([group, delta]) => ({ group, delta })),
+    byHolding,
+    byLiability,
+    topMovers: [...byHolding].sort((a, b) => Math.abs(b.after - b.before) - Math.abs(a.after - a.before)).slice(0, 6).map((h) => ({ ...h, delta: h.after - h.before })),
     ethPriceAfter: newPrice,
     hfBefore: chain.loan.healthFactor,
     hfAfter,
     liquidation: hfAfter !== null && hfAfter < 1,
     twinHfAfter,
+    cashflow: { interestDeltaUsd, depositIncomeDeltaUsd, netAnnualUsd: depositIncomeDeltaUsd - interestDeltaUsd },
+    monthlyGapUsd,
+    runwayMonths,
+  };
+}
+
+/** Everything a custom stress parameter can target, for the scenario builder. */
+export function stressTargets(holdings: UHolding[], liabilities: ULiability[]) {
+  const uniq = (xs: string[]) => [...new Set(xs)].sort();
+  return {
+    group: uniq(holdings.map((h) => h.group)).map((v) => ({ value: v, label: v })),
+    sector: Object.entries(SECTOR_LABEL).map(([value, label]) => ({ value, label })),
+    region: Object.entries(REGION_LABEL).map(([value, label]) => ({ value, label })),
+    currency: uniq([...holdings.map((h) => h.currency), ...liabilities.map((l) => l.currency ?? "USD")]).map((v) => ({ value: v, label: v })),
+    institution: uniq(holdings.map((h) => h.sourceName)).map((v) => ({ value: v, label: v })),
+    position: [...holdings.map((h) => ({ value: h.id, label: `${h.name} · ${h.sourceName}` })), ...liabilities.map((l) => ({ value: l.id, label: `${l.name} (debt)` }))],
+  };
+}
+
+const STRESS_KINDS: StressKind[] = ["group", "sector", "region", "currency", "institution", "position"];
+
+/** Validates untrusted stress input from the API. */
+export function parseStress(b: Record<string, unknown>): StressInput {
+  const n = (v: unknown, lo: number, hi: number) => Math.max(lo, Math.min(hi, Number.isFinite(Number(v)) ? Number(v) : 0));
+  const custom = Array.isArray(b.custom) ? b.custom.slice(0, 20) : [];
+  return {
+    equitiesPct: n(b.equitiesPct, -100, 200),
+    cryptoPct: n(b.cryptoPct, -100, 300),
+    privatePct: n(b.privatePct, -100, 200),
+    eurUsdPct: n(b.eurUsdPct, -60, 60),
+    ratesBps: n(b.ratesBps, -500, 1000),
+    incomePct: n(b.incomePct, -100, 200),
+    custom: custom
+      .filter((p): p is Record<string, unknown> => typeof p === "object" && p !== null && STRESS_KINDS.includes((p as Record<string, unknown>).kind as StressKind) && typeof (p as Record<string, unknown>).target === "string")
+      .map((p, i) => ({ id: String(p.id ?? `p${i}`), kind: p.kind as StressKind, target: String(p.target), pct: n(p.pct, -100, 300), label: p.label ? String(p.label).slice(0, 80) : undefined })),
   };
 }
 
@@ -282,22 +399,17 @@ export function buildRiskReport(
   const encumbered = sum(holdings.filter((h) => h.encumbered).map((h) => h.valueUsd));
   if (encumbered > 0) liquidityLadder.push({ bucket: "Locked as collateral", value: encumbered, pct: pct(encumbered, assets) });
 
-  const techValue = sum(holdings.filter((h) => h.sector === "tech").map((h) => h.valueUsd));
-  const cryptoValue = sum(holdings.filter((h) => h.group === "Crypto").map((h) => h.valueUsd));
-  const riskOnPct = pct(techValue + cryptoValue, netWorth);
-
-  const sectors = ["tech", "crypto", "broad_market", "rates", "consumer", "credit", "cash"] as const;
-  const sectorExposure = sectors
-    .map((sec) => ({ sector: sec, value: sum(holdings.filter((h) => h.sector === sec).map((h) => h.valueUsd)) }))
-    .filter((x) => x.value > 0)
-    .map((x) => ({ ...x, pct: pct(x.value, assets) }));
+  // Look-through exposure: everything below is a share of GROSS ASSETS, so each breakdown sums to 100%.
+  const exposure = computeExposure(holdings, assets, netWorth);
+  const riskOnPct = exposure.riskOnPct;
+  const sectorExposure = exposure.sectors;
 
   const currencies = [...new Set(holdings.map((h) => h.currency))]
     .map((ccy) => ({ ccy, value: sum(holdings.filter((h) => h.currency === ccy).map((h) => h.valueUsd)) }))
     .filter((x) => x.value > 0)
     .map((x) => ({ ...x, pct: pct(x.value, assets) }));
 
-  const topHoldings = [...holdings].sort((a, b) => b.valueUsd - a.valueUsd).slice(0, 6).map((h) => ({ name: h.name, value: h.valueUsd, pct: pct(h.valueUsd, netWorth), sector: h.sector }));
+  const topHoldings = exposure.top;
 
   const emergencyCash = sum(holdings.filter((h) => ["cash", "savings", "broker_cash"].includes(h.assetClass)).map((h) => h.valueUsd));
   const emergencyMonths = emergencyCash / persona.monthlyExpenses;
@@ -355,8 +467,8 @@ export function buildRiskReport(
       id: "risk-on",
       severity: riskOnPct > 45 ? "high" : "medium",
       category: "concentration",
-      title: `${Math.round(riskOnPct)}% of net worth rides the tech cycle`,
-      detail: "Employer options, NVDA/AAPL/MSFT, QQQ, the SAFE and ETH all tend to fall together. Your salary depends on the same sector.",
+      title: `${Math.round(riskOnPct)}% of your assets ride the tech cycle`,
+      detail: `Look-through technology plus crypto, counting funds by their index weights (QQQ is about half tech). Employer options, NVDA/AAPL/MSFT, the SAFE and ETH tend to fall together, and your salary depends on the same sector. Effective number of positions: ${exposure.concentration.effectivePositions.toFixed(1)}.`,
       owner: "you",
       actionLabel: "Trim single-name tech by ~$20k into broad-market or bond funds",
     });
@@ -542,6 +654,7 @@ export function buildRiskReport(
     allocation,
     liquidityLadder,
     sectorExposure,
+    exposure,
     currencies,
     topHoldings,
     riskOnPct,

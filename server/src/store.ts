@@ -1,6 +1,34 @@
 import { randomUUID } from "node:crypto";
-import { initialSources, type Source } from "./data/persona.js";
+import { initialSources, resetPersona, type Source } from "./data/persona.js";
 import type { ActivityEvent, Mandate, Payee, Proposal } from "./agent/types.js";
+import type { StressInput } from "./engine/risk.js";
+
+export interface Scenario {
+  id: string;
+  name: string;
+  input: StressInput;
+  builtIn?: boolean;
+}
+
+export function defaultScenarios(): Scenario[] {
+  const base = { equitiesPct: 0, cryptoPct: 0, privatePct: 0, eurUsdPct: 0, ratesBps: 0, incomePct: 0, custom: [] };
+  return [
+    { id: "tech", name: "Tech correction", builtIn: true, input: { ...base, equitiesPct: -25, cryptoPct: -30, privatePct: -30 } },
+    { id: "crypto", name: "Crypto winter", builtIn: true, input: { ...base, equitiesPct: -5, cryptoPct: -60, privatePct: -10 } },
+    { id: "2008", name: "2008-style crash", builtIn: true, input: { ...base, equitiesPct: -45, cryptoPct: -55, privatePct: -50, eurUsdPct: -10 } },
+    { id: "rates", name: "Rates +200 bps", builtIn: true, input: { ...base, ratesBps: 200 } },
+    { id: "job", name: "Job loss", builtIn: true, input: { ...base, incomePct: -100, privatePct: -40 } },
+    { id: "eur", name: "Euro slide", builtIn: true, input: { ...base, eurUsdPct: -15 } },
+  ];
+}
+
+export interface Settings {
+  /** Send questions about unclear transactions to Telegram. */
+  telegramQuestions: boolean;
+  /** Send new insights (budget overruns, detected private loans) to Telegram. */
+  telegramAlerts: boolean;
+}
+const defaultSettings = (): Settings => ({ telegramQuestions: true, telegramAlerts: true });
 
 export function defaultMandate(): Mandate {
   return {
@@ -39,7 +67,7 @@ export interface ChatTurn {
   text: string;
   at: number;
   proposalIds: string[];
-  engine?: "claude" | "rules";
+  engine?: "llm" | "rules";
 }
 
 export const store = {
@@ -54,6 +82,9 @@ export const store = {
   liveSeries: [] as Array<{ t: number; netWorth: number; onchain: number; hf: number | null }>,
   /** Background autopilot ticks. Survives demo resets so test runs stay deterministic. */
   autopilotRunning: true,
+  scenarios: defaultScenarios(),
+  settings: defaultSettings(),
+  alertedInsights: new Set<string>(),
 };
 
 export function resetStore() {
@@ -66,6 +97,10 @@ export function resetStore() {
   store.chatLog = [];
   store.demo = { crashing: false, injected: false };
   store.liveSeries = [];
+  store.scenarios = defaultScenarios();
+  store.settings = defaultSettings();
+  store.alertedInsights = new Set();
+  resetPersona();
 }
 
 export const newId = () => randomUUID().slice(0, 8);

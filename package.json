@@ -1,7 +1,7 @@
 {
-  "name": "prism-wealth",
+  "name": "halo-wealth",
   "private": true,
-  "description": "Prism: hybrid TradFi-to-DeFi wealth agent. Off-chain assets as attested collateral for on-chain credit, run by an autonomous wallet with bounded authority.",
+  "description": "Halo: hybrid TradFi-to-DeFi wealth agent. Off-chain assets as attested collateral for on-chain credit, run by an autonomous wallet with bounded authority.",
   "workspaces": [
     "contracts",
     "server",

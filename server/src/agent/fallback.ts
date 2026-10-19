@@ -6,7 +6,7 @@ import type { Proposal, TypedAction } from "./types.js";
 import { cashState } from "../cashflow/engine.js";
 
 /**
- * Offline agent used when no Anthropic credentials are configured. Same tools, same safety
+ * Offline agent used when no GROQ_API_KEY is configured. Same tools, same safety
  * pipeline, simple intent matching (English and Russian keywords) instead of an LLM.
  */
 
@@ -52,7 +52,7 @@ export async function chatWithRules(text: string): Promise<{ text: string; propo
     const lines = [
       `You can raise **${fmt.usd(amount)}** without selling anything:`,
       `- Standard DeFi terms: ${fmt.usd(c.standard.available)} available at ${c.standard.aprPct}% APR`,
-      `- With Proof of Wealth (Tier ${credit.tier}): ${fmt.usd(c.prism.available)} available at ${c.prism.aprPct}% APR`,
+      `- With Proof of Wealth (Tier ${credit.tier}): ${fmt.usd(c.halo.available)} available at ${c.halo.aprPct}% APR`,
       `- Breaking the Meridian term deposit early would forfeit its accrued 4.0% interest.`,
     ];
     if (!chain.attestation.active && credit.eligible) {
@@ -81,7 +81,7 @@ export async function chatWithRules(text: string): Promise<{ text: string; propo
 
   if (has(t, /(proof|attest|score|rating|tier|рейтинг|скор|доказ|кредитн)/)) {
     const lines = [
-      `**Prism score ${credit.score}, Tier ${credit.tier}.** ${fmt.usd(credit.totalPledgeable)} of verified assets after haircuts gives a ${fmt.usd(credit.creditLine)} credit line at ${(credit.rateBps / 100).toFixed(1)}% APR (standard: 9.0%).`,
+      `**Halo score ${credit.score}, Tier ${credit.tier}.** ${fmt.usd(credit.totalPledgeable)} of verified assets after haircuts gives a ${fmt.usd(credit.creditLine)} credit line at ${(credit.rateBps / 100).toFixed(1)}% APR (standard: 9.0%).`,
       ...credit.factors.map((f) => `- ${f.label}: ${Math.round(f.score)}/100 (${f.detail})`),
     ];
     if (credit.nextTier) lines.push(`Tier ${credit.nextTier.tier} needs ${credit.nextTier.pointsNeeded} more points. Diversification is the biggest lever.`);
@@ -147,11 +147,11 @@ export async function chatWithRules(text: string): Promise<{ text: string; propo
 
   return {
     text: [
-      `I'm running in **offline mode** (no Anthropic API key), so I understand a fixed set of requests:`,
+      `I'm running in **offline mode** (no Groq API key), so I understand a fixed set of requests:`,
       "- *What's my net worth?* · *How risky am I?* · *What if markets crash?*",
       "- *I need $5,000* · *Repay 2000* · *Protect my loan* · *Put idle cash to work* · *Show my credit score*",
       "- *How much can I safely spend this month?* · *How are my budgets?*",
-      `Set ANTHROPIC_API_KEY and restart the server to talk to Claude (${store.mandate.autonomy >= 2 ? "autopilot is on" : "autopilot needs approvals"}).`,
+      `Set GROQ_API_KEY and restart the server to switch on the AI agent (${store.mandate.autonomy >= 2 ? "autopilot is on" : "autopilot needs approvals"}).`,
     ].join("\n"),
     proposalIds: ids,
   };

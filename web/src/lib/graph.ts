@@ -1,5 +1,5 @@
 import { Coins, CreditCard, House, Landmark, ChartCandlestick, Rocket, ScrollText, Umbrella, type LucideIcon } from "lucide-react";
-import type { AppState, StressInput } from "../api";
+import type { AppState, StressResult } from "../api";
 
 export type CatId = "cash" | "equities" | "bonds" | "private" | "crypto" | "real" | "debts" | "insurance";
 export type LeafKind = "asset" | "debt" | "policy";
@@ -122,7 +122,7 @@ export function buildGraph(s: AppState, opts: { sort: SortKey; hidden: CatId[]; 
       leaves.push({
         id: `cover-${c.id}`,
         name: `Liquidation cover #${c.id}`,
-        institution: "Prism wallet",
+        institution: "Halo wallet",
         cat: "insurance",
         kind: "policy",
         value: c.coverUsd,
@@ -153,7 +153,8 @@ export function buildGraph(s: AppState, opts: { sort: SortKey; hidden: CatId[]; 
   const sorter = (a: Leaf, b: Leaf) =>
     opts.sort === "name" ? a.name.localeCompare(b.name) : opts.sort === "liquidity" ? (a.liquidityDays ?? 999) - (b.liquidityDays ?? 999) : Math.abs(b.value) - Math.abs(a.value);
 
-  const netWorth = s.risk.totals.netWorth;
+  // Shares are measured against gross assets, the same base the Risk page uses, so they add up to 100%.
+  const grossAssets = s.risk.totals.assets;
   const categories: Category[] = CAT_ORDER.filter((id) => !opts.hidden.includes(id))
     .map((id) => {
       const meta = CAT_META[id];
@@ -168,7 +169,7 @@ export function buildGraph(s: AppState, opts: { sort: SortKey; hidden: CatId[]; 
         value,
         leaves: own,
         institutions: [...new Set(own.filter((l) => !l.missing).map((l) => l.institution))],
-        sharePct: meta.kind === "policy" ? 0 : (Math.abs(value) / Math.max(1, netWorth)) * 100,
+        sharePct: meta.kind === "policy" ? 0 : (Math.abs(value) / Math.max(1, grossAssets)) * 100,
       };
     })
     .filter((c) => c.leaves.length > 0);
@@ -176,18 +177,18 @@ export function buildGraph(s: AppState, opts: { sort: SortKey; hidden: CatId[]; 
   return { categories, leaves: categories.flatMap((c) => c.leaves), all: leaves };
 }
 
-/** Same shock rules as the server's stress test, applied per position for the map preview. */
-export function shockPct(l: Leaf, s: StressInput): number {
-  if (l.kind !== "asset") return 0;
-  if (l.group === "Crypto") return s.cryptoPct;
-  if (l.group === "Public equities") return l.sector === "tech" ? s.equitiesPct * 1.25 : s.equitiesPct;
-  if (l.group === "Private & venture") return s.privatePct;
-  if (l.currency === "EUR") return s.eurUsdPct;
-  if (l.group === "Bonds & T-bills") return -s.equitiesPct * 0.15;
-  return 0;
+/** Simulated value per node id, taken from the server's stress result (assets and debts). */
+export type SimValues = Map<string, number> | null;
+
+export function simValues(result: StressResult | null | undefined): SimValues {
+  if (!result) return null;
+  const m = new Map<string, number>();
+  for (const h of result.byHolding) m.set(h.id, h.after);
+  for (const l of result.byLiability) m.set(l.id, -l.after);
+  return m;
 }
 
-export const shocked = (l: Leaf, s: StressInput | null) => (s ? l.value * (1 + shockPct(l, s) / 100) : l.value);
+export const shocked = (l: Leaf, sim: SimValues) => (sim && l.kind !== "policy" ? sim.get(l.id) ?? l.value : l.value);
 
 export function liquidityLabel(days?: number) {
   if (days === undefined) return "n/a";
@@ -197,23 +198,34 @@ export function liquidityLabel(days?: number) {
   return `${(days / 365).toFixed(1)} yr`;
 }
 
-/** Layout: orb on the left, category column, positions on an arc to the right (after the reference). */
-export function layout(W: number, H: number, categories: Category[]) {
-  const cy = H / 2;
-  const orb = { x: Math.max(120, W * 0.12), y: cy, r: 40 };
-  const cardW = Math.min(214, Math.max(170, W * 0.18));
+export const LEAF_GAP = 40; // vertical px reserved per position label: no two labels can overlap
+const TOP_RESERVE = 64; // room for the stage pill and simulation banner
+const BOTTOM_RESERVE = 28;
+
+/**
+ * Layout: orb on the left, category column, positions on an arc to the right (after the reference).
+ * The canvas grows taller than the viewport when there are many positions; the caller scales it to fit.
+ */
+export function layout(viewW: number, viewH: number, categories: Category[], collapsed: CatId[]) {
+  const leaves = categories.filter((c) => !collapsed.includes(c.id)).flatMap((c) => c.leaves);
   const n = Math.max(1, categories.length);
+  const needH = Math.max(leaves.length * LEAF_GAP, n * 84) + TOP_RESERVE + BOTTOM_RESERVE;
+  const H = Math.max(viewH, needH);
+  const fit = Math.min(1, viewH / H);
+  const W = viewW / fit;
+  const cy = TOP_RESERVE + (H - TOP_RESERVE - BOTTOM_RESERVE) / 2;
+  const orb = { x: Math.max(130, W * 0.12), y: cy, r: 40 };
+  const cardW = Math.min(214, Math.max(170, W * 0.18));
   const gap = 12;
-  const cardH = Math.min(76, (H - 80 - gap * (n - 1)) / n);
-  const colX = orb.x + Math.max(140, W * 0.14);
+  const cardH = Math.min(76, (H - TOP_RESERVE - BOTTOM_RESERVE - gap * (n - 1)) / n);
+  const colX = orb.x + Math.max(150, W * 0.14);
   const total = n * cardH + (n - 1) * gap;
   const cards = categories.map((c, i) => ({ id: c.id, x: colX, y: cy - total / 2 + i * (cardH + gap), w: cardW, h: cardH }));
 
-  const leaves = categories.flatMap((c) => c.leaves);
-  const labelW = 196;
-  const xMid = W - labelW - 12;
-  const xEnd = colX + cardW + 110;
-  const yExt = Math.max(100, H / 2 - 30);
+  const labelW = 200;
+  const xMid = W - labelW - 16;
+  const xEnd = colX + cardW + 120;
+  const yExt = Math.max(60, (Math.max(leaves.length - 1, 1) * LEAF_GAP) / 2);
   const d = Math.max(40, xMid - xEnd);
   const R = (yExt * yExt + d * d) / (2 * d);
   const acx = xMid - R;
@@ -224,8 +236,7 @@ export function layout(W: number, H: number, categories: Category[]) {
     const x = acx + Math.sqrt(Math.max(0, R * R - (y - cy) ** 2));
     return { id: lf.id, cat: lf.cat, x, y };
   });
-  const spacing = L > 1 ? (2 * yExt) / (L - 1) : 999;
-  return { orb, cards, pts, spacing };
+  return { W, H, fit, orb, cards, pts, haloR: Math.min(260, colX - orb.x + 40, H * 0.42) };
 }
 
 export function curve(x1: number, y1: number, x2: number, y2: number, bend = 0.45) {

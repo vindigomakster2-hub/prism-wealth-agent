@@ -104,7 +104,7 @@ export interface ReceiptDraft {
   total: number;
   items: ReceiptItem[];
   status: "draft" | "confirmed";
-  via: "claude" | "sample";
+  via: "ai" | "sample";
   createdAt: number;
 }
 

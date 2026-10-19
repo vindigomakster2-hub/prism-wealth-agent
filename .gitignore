@@ -9,7 +9,7 @@ contracts/artifacts/
 contracts/cache/
 server/.deployments.json
 
-# secrets: never commit keys (Anthropic, Telegram, GoCardless)
+# secrets: never commit keys (Groq, Telegram, GoCardless)
 .env
 .env.*
 !.env.example

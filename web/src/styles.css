@@ -1,4 +1,4 @@
-/* Prism: graph-explorer layout after the reference, in Prism's warm mauve / lime / cream / orange palette. */
+/* Halo: graph-explorer layout after the reference, in Halo's warm mauve / lime / cream / orange palette. */
 :root {
   --bg-0: #131114;
   --panel: #1a171c;
@@ -173,7 +173,8 @@ a { color: var(--lime); }
 }
 .stage-pill { position: absolute; top: 14px; right: 14px; z-index: 5; display: inline-flex; align-items: center; gap: 10px; padding: 8px 14px; border-radius: 12px; background: rgba(255, 255, 255, 0.07); border: 1px solid var(--stroke); font-size: 12.5px; color: var(--ink-2); }
 .sim-banner { position: absolute; top: 14px; left: 14px; z-index: 5; display: flex; align-items: center; gap: 10px; flex-wrap: wrap; padding: 8px 10px 8px 14px; border-radius: 12px; background: rgba(255, 122, 47, 0.14); border: 1px solid rgba(255, 122, 47, 0.4); font-size: 12.5px; color: #ffd3b8; max-width: 60%; }
-.map-canvas { position: absolute; inset: 0; cursor: grab; touch-action: none; }
+.map-canvas { position: absolute; inset: 0; cursor: grab; touch-action: none; user-select: none; -webkit-user-select: none; }
+.map-hint { position: absolute; left: 14px; bottom: 10px; display: inline-flex; gap: 6px; align-items: center; font-size: 11.5px; color: var(--ink-3); pointer-events: none; }
 .map-canvas:active { cursor: grabbing; }
 .map-inner { position: absolute; inset: 0; transition: transform 0.18s ease-out; }
 .map-svg { position: absolute; inset: 0; overflow: visible; }
@@ -284,6 +285,36 @@ a { color: var(--lime); }
 .tg-buttons button:hover { background: rgba(110, 160, 220, 0.3); }
 .tg-done { margin-top: 6px; color: #a6e8c6; font-size: 12px; }
 .orb-toggle { position: absolute; transform: translateX(-50%); }
+
+/* ------------------------------------------------------------------ stress builder */
+.scenario-chip { display: inline-flex; align-items: center; border: 1px solid var(--stroke-2); border-radius: 999px; overflow: hidden; }
+.scenario-chip button { background: transparent; border: none; color: var(--ink-2); padding: 6px 10px; font-size: 12.5px; cursor: pointer; display: inline-flex; align-items: center; }
+.scenario-chip button:hover { background: var(--glass-2); color: var(--ink); }
+.scenario-chip button + button { padding: 6px 8px 6px 2px; }
+.param-row { display: grid; grid-template-columns: auto minmax(0, 1fr) auto auto auto; gap: 8px; align-items: center; font-size: 13px; }
+.param-target { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.param-add { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.4fr) 80px auto; gap: 6px; }
+.param-add .input { padding: 7px 8px; }
+
+/* ------------------------------------------------------------------ map briefs */
+.brief { position: absolute; z-index: 20; width: 290px; padding: 14px; border-radius: 16px; background: rgba(20, 18, 22, 0.97); border: 1px solid rgba(239, 230, 210, 0.35); box-shadow: 0 24px 50px rgba(0, 0, 0, 0.55); display: flex; flex-direction: column; gap: 8px; cursor: default; }
+.brief-title { font-family: var(--display); font-weight: 500; font-size: 15px; }
+.brief-value { font-family: var(--display); font-size: 26px; letter-spacing: -0.01em; }
+.brief-rows { display: grid; grid-template-columns: auto auto; gap: 4px 12px; font-size: 12.5px; color: var(--ink-2); }
+.brief-rows b { text-align: right; color: var(--ink); font-weight: 600; }
+.brief-rows.big { font-size: 13.5px; gap: 8px 14px; }
+.brief-list { display: flex; flex-direction: column; gap: 4px; font-size: 12.5px; }
+.ellip { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 170px; }
+.mixbar { display: flex; height: 7px; border-radius: 4px; overflow: hidden; gap: 2px; background: rgba(255, 255, 255, 0.06); }
+.mixbar i { display: block; height: 100%; }
+.clickable-row { cursor: pointer; }
+.clickable-row:hover td { background: rgba(255, 255, 255, 0.04); }
+.modal.wide { width: min(1080px, 100%); }
+.mc-collapse { position: absolute; right: -11px; top: 50%; transform: translateY(-50%); width: 22px; height: 22px; border-radius: 50%; border: 1px solid rgba(239, 230, 210, 0.45); background: #18161a; color: var(--ink); display: grid; place-items: center; cursor: pointer; padding: 0; font-size: 10px; font-weight: 700; }
+.mc-collapse:hover { border-color: var(--lime); color: var(--lime); }
+.map-card, .leaf, .orb-hit { touch-action: none; }
+.map-card.dragging, .leaf.dragging { cursor: grabbing; }
+.leaf-name, .leaf-inline { text-shadow: 0 1px 3px #000, 0 0 8px #000; }
 
 /* ------------------------------------------------------------------ modal */
 .modal-back { position: fixed; inset: 0; background: rgba(5, 4, 6, 0.65); backdrop-filter: blur(4px); display: grid; place-items: center; z-index: 200; padding: 16px; }

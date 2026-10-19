@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
 import { LLM_ENABLED } from "../config.js";
-import { extractWithTool } from "../agent/claude.js";
+import { extractWithTool } from "../agent/groq.js";
 import type { Holding, Source } from "../data/persona.js";
 import { logEvent, store } from "../store.js";
 import { classify, itemKey, merchantKey, questionFor } from "./classifier.js";
@@ -72,13 +72,13 @@ export function ingest(raws: RawTxn[], source: TxnSource, importId?: string) {
   cash.txns.sort((a, b) => b.date.localeCompare(a.date));
   const review = created.filter((t) => t.status === "review");
   const ask = (list: CashTxn[]) => list.filter((t) => t.status === "review").forEach((t) => void askOnTelegram(t).then((ok) => ok && t.askedVia.push("telegram")));
-  if (LLM_ENABLED && review.length) void triageWithClaude(review).finally(() => ask(review));
+  if (LLM_ENABLED && review.length) void triageWithLLM(review).finally(() => ask(review));
   else ask(review);
   return { imported: created.length, duplicates, auto: created.length - review.length, review: review.length, ids: created.map((t) => t.id) };
 }
 
-/** Claude looks at the unclear ones: files what it is sure about, sharpens the question for the rest. */
-async function triageWithClaude(txns: CashTxn[]) {
+/** The LLM looks at the unclear ones: files what it is sure about, sharpens the question for the rest. */
+async function triageWithLLM(txns: CashTxn[]) {
   try {
     const out = await extractWithTool<{ results: Array<{ id: string; category: string; confidence: number; question: string }> }>(
       "You categorise personal bank transactions. Descriptors are often cryptic: 'TST*' is a Toast restaurant terminal, 'SQ *' a Square merchant, 'AMZN Mktp' Amazon Marketplace, 'IRS TREAS 310' a US tax refund. For each transaction give the most likely category, your confidence from 0 to 1, and one short, friendly question for the owner in case you are unsure. Person-to-person transfers are ambiguous by nature: keep confidence below 0.6 for them. Respond only by calling classify_transactions.",
@@ -86,7 +86,7 @@ async function triageWithClaude(txns: CashTxn[]) {
       {
         name: "classify_transactions",
         description: "Return a category guess and a clarifying question for each transaction.",
-        input_schema: {
+        parameters: {
           type: "object",
           properties: {
             results: {
@@ -112,11 +112,11 @@ async function triageWithClaude(txns: CashTxn[]) {
       const cat = r.category as SpendCat;
       if (!t || t.status !== "review" || !(cat in CATS)) continue;
       if (r.confidence >= 0.85 && !["private_debt", "transfers", "gifts"].includes(cat)) {
-        Object.assign(t, { category: cat, status: "ai", confidence: r.confidence, reason: `Claude: ${CATS[cat].label} (${Math.round(r.confidence * 100)}% sure)`, question: undefined });
-        markAnswered(t.id, `Claude filed it under ${CATS[cat].label}`);
+        Object.assign(t, { category: cat, status: "ai", confidence: r.confidence, reason: `AI: ${CATS[cat].label} (${Math.round(r.confidence * 100)}% sure)`, question: undefined });
+        markAnswered(t.id, `AI filed it under ${CATS[cat].label}`);
       } else if (t.question) {
         t.question.text = r.question || t.question.text;
-        t.reason = `Claude suggests ${CATS[cat].label}, asking you to confirm`;
+        t.reason = `AI suggests ${CATS[cat].label}, asking you to confirm`;
         if (!t.question.options.some((o) => o.category === cat)) t.question.options.unshift({ category: cat, label: CATS[cat].label });
       }
     }

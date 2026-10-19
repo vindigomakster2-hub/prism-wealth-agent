@@ -1,9 +1,10 @@
 import { createContext, useCallback, useContext, useEffect, useRef, useState } from "react";
-import { BadgeCheck, Bell, Bot, FlaskConical, Landmark, Plus, Receipt, RefreshCw, Search, ShieldAlert, TrendingDown, Umbrella, Waypoints, X } from "lucide-react";
+import { BadgeCheck, Bell, Bot, FlaskConical, Landmark, Plus, Receipt, RefreshCw, Search, Settings as SettingsIcon, ShieldAlert, TrendingDown, Umbrella, UserRound, Waypoints, X } from "lucide-react";
+import { Account, Settings } from "./pages/Settings";
 import { CashFlow } from "./pages/CashFlow";
-import { api, type AppState, type Proposal, type StressInput, type TypedAction } from "./api";
+import { api, type AppState, type Proposal, type StressInput, type StressResult, type TypedAction } from "./api";
 import { AgentBadge, proposalToast, ToastProvider, useToast } from "./components/ui";
-import { PrismLogo } from "./components/PrismArt";
+import { HaloLogo } from "./components/HaloArt";
 import { SimulationModal } from "./components/SimulationModal";
 import type { CatId, SortKey, SourceFilter } from "./lib/graph";
 import { MapToolbar, WealthMap } from "./pages/WealthMap";
@@ -23,9 +24,17 @@ const PAGES = [
   { id: "agent", label: "Agent", icon: Bot, title: "Agent console", sub: "Talk to the agent, set its mandate, audit every decision", el: Agent },
   { id: "protect", label: "Earn & Protect", icon: Umbrella, title: "Earn & protect", sub: "Yield on idle cash and cover for your positions", el: Protect },
   { id: "lab", label: "Demo lab", icon: FlaskConical, title: "Demo lab", sub: "Stress the system live: market crash, time travel, prompt injection", el: Lab },
+  { id: "account", label: "Account", icon: UserRound, title: "Account", sub: "Your profile, wallet keys and data", el: Account, bottom: true },
+  { id: "settings", label: "Settings", icon: SettingsIcon, title: "Settings", sub: "Notifications, bank sync, map layout and integrations", el: Settings, bottom: true },
 ] as const;
 
 export type PageId = (typeof PAGES)[number]["id"];
+
+/** A simulation previewed on the map: the inputs and the server's per-position result. */
+export interface Sim {
+  input: StressInput;
+  result: StressResult;
+}
 
 export interface MapUi {
   view: "graph" | "tree";
@@ -36,6 +45,7 @@ export interface MapUi {
   query: string;
   searchSubmit: number;
   recenter: number;
+  resetLayout: number;
   balance: "net" | "true";
 }
 
@@ -48,8 +58,8 @@ interface Ctx {
   reject: (id: string) => Promise<void>;
   map: MapUi;
   setMap: (patch: Partial<MapUi>) => void;
-  sim: StressInput | null;
-  setSim: (s: StressInput | null) => void;
+  sim: Sim | null;
+  setSim: (s: Sim | null) => void;
   openSim: () => void;
 }
 const AppCtx = createContext<Ctx | null>(null);
@@ -64,8 +74,8 @@ function Shell() {
   const [s, setS] = useState<AppState | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [page, setPage] = useState<PageId>(pageFromHash);
-  const [map, setMapState] = useState<MapUi>({ view: "graph", zoom: 1, hidden: [], sort: "value", source: "all", query: "", searchSubmit: 0, recenter: 0, balance: "net" });
-  const [sim, setSim] = useState<StressInput | null>(null);
+  const [map, setMapState] = useState<MapUi>({ view: "graph", zoom: 1, hidden: [], sort: "value", source: "all", query: "", searchSubmit: 0, recenter: 0, resetLayout: 0, balance: "net" });
+  const [sim, setSim] = useState<Sim | null>(null);
   const [simOpen, setSimOpen] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
   const searchRef = useRef<HTMLInputElement>(null);
@@ -139,8 +149,8 @@ function Shell() {
     return (
       <div className="loading-screen">
         <div>
-          <PrismLogo size={48} />
-          <h2 style={{ fontFamily: "var(--display)", fontWeight: 400 }}>Starting Prism…</h2>
+          <HaloLogo size={48} />
+          <h2 style={{ fontFamily: "var(--display)", fontWeight: 400 }}>Starting Halo…</h2>
           <p className="muted" style={{ maxWidth: 420 }}>
             {err ? <>Waiting for the API: {err}. Run <span className="kbd">npm run dev</span> in the project root.</> : "Connecting to the agent server and local chain."}
           </p>
@@ -161,9 +171,9 @@ function Shell() {
       <div className="shell">
         <nav className="sidebar" aria-label="Main">
           <div className="logo">
-            <PrismLogo />
+            <HaloLogo />
           </div>
-          {PAGES.map((p) => (
+          {PAGES.filter((p) => !("bottom" in p)).map((p) => (
             <button key={p.id} className={`nav-btn ${page === p.id ? "active" : ""}`} onClick={() => go(p.id)} aria-label={p.label} aria-current={page === p.id ? "page" : undefined}>
               <p.icon size={21} strokeWidth={1.7} />
               {((p.id === "agent" && pending.length > 0) || (p.id === "cashflow" && s.cashBrief.review > 0)) && <span className="badge-dot" />}
@@ -172,6 +182,12 @@ function Shell() {
           ))}
           <div className="spacer" />
           <div className="side-bottom" style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+            {PAGES.filter((p) => "bottom" in p).map((p) => (
+              <button key={p.id} className={`nav-btn ${page === p.id ? "active" : ""}`} onClick={() => go(p.id)} aria-label={p.label} aria-current={page === p.id ? "page" : undefined}>
+                <p.icon size={21} strokeWidth={1.7} />
+                <span className="tip">{p.label}</span>
+              </button>
+            ))}
             <button className="nav-btn" onClick={() => go("agent")} aria-label={`${pending.length} approvals waiting`}>
               <Bell size={21} strokeWidth={1.7} />
               {pending.length > 0 && <span className="badge-dot" />}
@@ -183,7 +199,7 @@ function Shell() {
         <main className="main">
           <header className="appbar">
             <div className="brand">
-              <span className="brand-name">Prism</span>
+              <span className="brand-name">Halo</span>
               <span className="brand-sub">Wealth Agent Platform</span>
             </div>
             <div className="appbar-center">{isMap && <MapToolbar />}</div>
@@ -216,9 +232,9 @@ function Shell() {
                 <Bell size={19} strokeWidth={1.8} />
                 {pending.length > 0 && <span className="count">{pending.length}</span>}
               </button>
-              <div className="avatar" title={`${s.persona.name}, ${s.persona.occupation}`}>
+              <button className="avatar" style={{ border: "none", cursor: "pointer" }} title={`${s.persona.name}: account`} onClick={() => go("account")} aria-label="Account">
                 {s.persona.initials}
-              </div>
+              </button>
             </div>
           </header>
 

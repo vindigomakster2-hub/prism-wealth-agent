@@ -87,7 +87,43 @@ export const persona = {
   monthlyExpenses: 3400,
   walletAgeYears: 3.2,
   baseCurrency: "USD",
+  email: "alex.morgan@example.com",
+  country: "Czechia",
+  memberSince: "2023-08-01",
 };
+
+const PERSONA_DEFAULTS = { ...persona };
+export function resetPersona() {
+  Object.assign(persona, PERSONA_DEFAULTS);
+}
+
+/** Editable profile fields (Settings → Account). Numbers feed the risk and credit engines. */
+export function updatePersona(b: Record<string, unknown>) {
+  const str = (k: "name" | "occupation" | "email" | "country", max = 80) => {
+    if (typeof b[k] === "string") persona[k] = (b[k] as string).trim().slice(0, max) || persona[k];
+  };
+  const num = (k: "age" | "dependents" | "monthlyIncome" | "monthlyExpenses", lo: number, hi: number) => {
+    if (b[k] === undefined) return;
+    const v = Number(b[k]);
+    if (!Number.isFinite(v) || v < lo || v > hi) throw Object.assign(new Error(`${k} must be between ${lo} and ${hi}`), { status: 400 });
+    persona[k] = Math.round(v);
+  };
+  str("name");
+  str("occupation");
+  str("email", 120);
+  str("country");
+  num("age", 16, 110);
+  num("dependents", 0, 20);
+  num("monthlyIncome", 0, 10_000_000);
+  num("monthlyExpenses", 0, 10_000_000);
+  persona.initials = persona.name
+    .split(/\s+/)
+    .map((w) => w[0] ?? "")
+    .join("")
+    .slice(0, 2)
+    .toUpperCase();
+  return persona;
+}
 
 const eur = (n: number) => Math.round(n * EURUSD);
 

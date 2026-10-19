@@ -1,5 +1,5 @@
 {
-  "name": "@prism/web",
+  "name": "@halo/web",
   "private": true,
   "type": "module",
   "scripts": {

@@ -26,7 +26,7 @@ import { usd, usdCompact } from "../format";
 const STATUS: Record<string, { label: string; tone: "good" | "warn" | "lime" | "neutral" }> = {
   auto: { label: "Rule", tone: "neutral" },
   learned: { label: "Learned", tone: "lime" },
-  ai: { label: "Claude", tone: "lime" },
+  ai: { label: "AI", tone: "lime" },
   review: { label: "Needs answer", tone: "warn" },
   confirmed: { label: "You", tone: "good" },
 };
@@ -58,7 +58,7 @@ function useCash() {
 }
 
 export function CashFlow() {
-  const { s, refresh } = useApp();
+  const { s, refresh, go } = useApp();
   const toast = useToast();
   const [c, reload] = useCash();
   const [filter, setFilter] = useState<"all" | "review" | "csv" | "receipt" | "sync">("all");
@@ -154,7 +154,7 @@ export function CashFlow() {
 
       <div className="grid g-2">
         <CsvImport onDone={() => Promise.all([reload(), refresh()]).then(() => undefined)} />
-        <ReceiptScanner llm={c.llm} categories={c.categories} spend={c.spendCategories} onDone={() => Promise.all([reload(), refresh()]).then(() => undefined)} />
+        <ReceiptScanner vision={s.llm.enabled && s.llm.vision} categories={c.categories} spend={c.spendCategories} onDone={() => Promise.all([reload(), refresh()]).then(() => undefined)} />
       </div>
 
       <div className="grid g-2">
@@ -217,8 +217,8 @@ export function CashFlow() {
           <span className="muted" style={{ fontSize: 12 }}>
             {c.openBanking.gocardless ? "Real bank connector (GoCardless, PSD2) is configured." : "Bank feed is simulated. Set GOCARDLESS_SECRET_ID/KEY to connect real EU banks through PSD2."}
           </span>
-          <button className="btn sm danger" onClick={() => confirm("Delete all off-chain data and revoke every connection?") && after(api.deleteAll(), "All off-chain data deleted")}>
-            Delete all my data
+          <button className="btn sm ghost" onClick={() => go("account")}>
+            Export or delete your data
           </button>
         </div>
       </div>
@@ -276,19 +276,11 @@ function TelegramCard({ c, onAnswer }: { c: CashState; onAnswer: (id: string, ca
           <h3 className="card-title"><MessageCircle size={18} /> Telegram</h3>
           <div className="card-sub">The agent asks where you already are</div>
         </div>
-        <StatusPill tone={t.linked ? "good" : t.configured ? "warn" : "neutral"}>{t.linked ? `Linked${t.username ? ` · @${t.username}` : ""}` : t.configured ? "Waiting for /start" : "Not configured"}</StatusPill>
+        <StatusPill tone={t.linked ? "good" : "neutral"}>{t.linked ? `Linked${t.username ? ` · @${t.username}` : ""}` : "Not linked"}</StatusPill>
       </div>
-      {!t.configured && (
-        <ol className="ink2" style={{ fontSize: 12.5, paddingLeft: 18, margin: "0 0 12px" }}>
-          <li>Create a bot with @BotFather and copy its token.</li>
-          <li>Restart the server with <span className="kbd">TELEGRAM_BOT_TOKEN</span> set.</li>
-          <li>Send <span className="kbd">/start</span> to your bot. That chat becomes the only one that can answer.</li>
-        </ol>
-      )}
-      {t.configured && !t.linked && <p className="ink2" style={{ fontSize: 12.5 }}>Open Telegram and send /start to @{t.username ?? "your bot"} to link this chat.</p>}
       {t.lastError && <p style={{ fontSize: 12, color: "#ffbcbc" }}>Last error: {t.lastError}</p>}
       <div className="phone">
-        <div className="phone-head"><Smartphone size={14} /> Prism bot {t.linked ? "" : "· preview"}</div>
+        <div className="phone-head"><Smartphone size={14} /> Halo bot {t.linked ? "" : "· preview"}</div>
         {t.outbox.length === 0 && <div className="muted" style={{ fontSize: 12, padding: 10 }}>No messages yet</div>}
         {t.outbox.slice(0, 3).map((msg) => (
           <div key={msg.at + msg.text} className="tg-msg">
@@ -486,7 +478,7 @@ function CsvImport({ onDone }: { onDone: () => Promise<void> }) {
 
 // ======================================================================= receipts
 
-function ReceiptScanner({ llm, categories, spend, onDone }: { llm: boolean; categories: CashState["categories"]; spend: CashState["spendCategories"]; onDone: () => Promise<void> }) {
+function ReceiptScanner({ vision, categories, spend, onDone }: { vision: boolean; categories: CashState["categories"]; spend: CashState["spendCategories"]; onDone: () => Promise<void> }) {
   const toast = useToast();
   const [draft, setDraft] = useState<ReceiptDraft | null>(null);
   const [cats, setCats] = useState<Record<string, string>>({});
@@ -537,7 +529,7 @@ function ReceiptScanner({ llm, categories, spend, onDone }: { llm: boolean; cate
         </div>
       </div>
       <div className="row-flex">
-        <button className="btn" disabled={!llm || busy} title={llm ? undefined : "Needs ANTHROPIC_API_KEY for Claude Vision"} onClick={() => input.current?.click()}>
+        <button className="btn" disabled={!vision || busy} title={vision ? undefined : "Needs GROQ_API_KEY and GROQ_VISION_MODEL"} onClick={() => input.current?.click()}>
           <Camera size={15} /> Photo
         </button>
         <input ref={input} type="file" accept="image/*" capture="environment" hidden onChange={async (e) => { const f = e.target.files?.[0]; if (f) await photo(f); e.target.value = ""; }} />
@@ -545,7 +537,7 @@ function ReceiptScanner({ llm, categories, spend, onDone }: { llm: boolean; cate
         <button className="btn sm ghost" disabled={busy} onClick={() => scan({ sample: 2 })}>Sample receipt 2 (a week later)</button>
         {busy && <RefreshCw size={15} className="spin" />}
       </div>
-      {!llm && <p className="muted" style={{ fontSize: 12 }}>Photo scanning uses Claude Vision; without an API key, use the samples.</p>}
+      {!vision && <p className="muted" style={{ fontSize: 12 }}>Photo scanning needs a Groq vision model (see README); meanwhile, use the samples.</p>}
       {draft && (
         <>
           <div className="row-flex" style={{ margin: "14px 0 8px" }}>
@@ -569,7 +561,7 @@ function ReceiptScanner({ llm, categories, spend, onDone }: { llm: boolean; cate
                         {spend.map((id) => <option key={id} value={id}>{categories[id].label}</option>)}
                       </select>
                     </td>
-                    <td>{i.source === "memory" ? <span className="pill lime">memory</span> : i.source === "ai" ? <span className="pill lime">Claude</span> : i.source === "rule" ? <span className="pill">rule</span> : <span className="pill warn">new</span>}</td>
+                    <td>{i.source === "memory" ? <span className="pill lime">memory</span> : i.source === "ai" ? <span className="pill lime">AI</span> : i.source === "rule" ? <span className="pill">rule</span> : <span className="pill warn">new</span>}</td>
                   </tr>
                 ))}
               </tbody>

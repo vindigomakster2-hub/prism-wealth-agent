@@ -97,7 +97,7 @@ export function computeCredit(sources: Source[], chain: OnchainState, risk: Risk
 
   const coll = chain.loan.collateralUsd;
   const standardMax = coll * 0.7;
-  const prismMax = coll * 0.7 + Math.min(creditLine, coll * 0.5);
+  const haloMax = coll * 0.7 + Math.min(creditLine, coll * 0.5);
   const debt = chain.loan.debt;
   const nextTierGap = tier < 3 ? TIER_MIN_SCORE[tier + 1] - score : 0;
 
@@ -121,7 +121,7 @@ export function computeCredit(sources: Source[], chain: OnchainState, risk: Risk
     nextTier: tier < 3 ? { tier: tier + 1, pointsNeeded: nextTierGap, rateBps: TIER_RATE_BPS[tier + 1] } : null,
     comparison: {
       standard: { ltvPct: 70, aprPct: TIER_RATE_BPS[0] / 100, maxBorrow: standardMax, available: Math.max(0, standardMax - debt) },
-      prism: { ltvPct: coll > 0 ? (prismMax / coll) * 100 : 70, aprPct: TIER_RATE_BPS[tier] / 100, maxBorrow: prismMax, available: Math.max(0, prismMax - debt) },
+      halo: { ltvPct: coll > 0 ? (haloMax / coll) * 100 : 70, aprPct: TIER_RATE_BPS[tier] / 100, maxBorrow: haloMax, available: Math.max(0, haloMax - debt) },
       annualSavingsUsd: (debt * (TIER_RATE_BPS[0] - TIER_RATE_BPS[tier])) / 10000,
     },
   };
@@ -155,7 +155,7 @@ export async function signAttestation(subject: string, profile: CreditProfile, s
     nonce,
   };
   const signature = await signers.attestor.signTypedData(
-    { name: "PrismCreditRegistry", version: "1", chainId: 31337, verifyingContract: addr.registry },
+    { name: "HaloCreditRegistry", version: "1", chainId: 31337, verifyingContract: addr.registry },
     {
       Attestation: [
         { name: "subject", type: "address" },

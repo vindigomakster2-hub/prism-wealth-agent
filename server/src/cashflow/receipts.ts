@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
-import { LLM_ENABLED } from "../config.js";
-import { extractWithTool } from "../agent/claude.js";
+import { LLM_ENABLED, VISION_MODEL } from "../config.js";
+import { extractWithTool } from "../agent/groq.js";
 import { classifyItem } from "./classifier.js";
 import { CATS, cash, type ReceiptDraft, type ReceiptItem, type SpendCat } from "./state.js";
 
@@ -64,8 +64,10 @@ export function sampleReceipt(n: 1 | 2): ReceiptDraft {
 
 const CAT_IDS = Object.keys(CATS).filter((c) => CATS[c as SpendCat].kind === "spend");
 
-export async function scanWithClaude(imageBase64: string, mediaType: string): Promise<ReceiptDraft> {
-  if (!LLM_ENABLED) throw new Error("Receipt photos need Claude: set ANTHROPIC_API_KEY, or try a sample receipt.");
+export async function scanWithVision(imageBase64: string, mediaType: string): Promise<ReceiptDraft> {
+  if (!LLM_ENABLED || !VISION_MODEL) {
+    throw new Error("Receipt photos need GROQ_API_KEY and GROQ_VISION_MODEL (a Groq model with image input). Try a sample receipt meanwhile.");
+  }
   if (!/^image\/(png|jpeg|webp|gif)$/.test(mediaType)) throw new Error("Upload a PNG, JPEG, WEBP or GIF photo");
   const out = await extractWithTool<{
     merchant: string;
@@ -76,13 +78,13 @@ export async function scanWithClaude(imageBase64: string, mediaType: string): Pr
   }>(
     "You read shopping receipts. Receipts often use cryptic abbreviations (e.g. 'МОЛ ПАСТ 3.2%' is pasteurised milk). Transcribe every line item exactly as printed in `raw`, expand it into a clear `name`, and pick the most likely category, or 'unknown' if you are unsure. Prices are per unit. Respond only by calling record_receipt.",
     [
-      { type: "image", source: { type: "base64", media_type: mediaType as "image/png", data: imageBase64 } },
+      { type: "image_url", image_url: { url: `data:${mediaType};base64,${imageBase64}` } },
       { type: "text", text: "Extract this receipt with record_receipt." },
     ],
     {
       name: "record_receipt",
       description: "Record the parsed receipt.",
-      input_schema: {
+      parameters: {
         type: "object",
         properties: {
           merchant: { type: "string" },
@@ -107,13 +109,14 @@ export async function scanWithClaude(imageBase64: string, mediaType: string): Pr
         required: ["merchant", "currency", "total", "items"],
       },
     },
+    VISION_MODEL,
   );
   return finalize({
     merchant: out.merchant || "Receipt",
     date: /^\d{4}-\d{2}-\d{2}$/.test(out.date ?? "") ? out.date : "",
     currency: (out.currency || "USD").toUpperCase(),
     total: Number(out.total) || 0,
-    via: "claude",
+    via: "ai",
     items: (out.items ?? []).map((i) => ({
       id: "",
       raw: String(i.raw),
