@@ -4,7 +4,7 @@ import { Account, Settings } from "./pages/Settings";
 import { CashFlow } from "./pages/CashFlow";
 import { api, type AppState, type Proposal, type StressInput, type StressResult, type TypedAction } from "./api";
 import { AgentBadge, proposalToast, ToastProvider, useToast } from "./components/ui";
-import { HaloLogo } from "./components/HaloArt";
+import { AbanqLogo } from "./components/AbanqArt";
 import { SimulationModal } from "./components/SimulationModal";
 import type { CatId, SortKey, SourceFilter } from "./lib/graph";
 import { MapToolbar, WealthMap } from "./pages/WealthMap";
@@ -149,8 +149,8 @@ function Shell() {
     return (
       <div className="loading-screen">
         <div>
-          <HaloLogo size={48} />
-          <h2 style={{ fontFamily: "var(--display)", fontWeight: 400 }}>Starting Halo…</h2>
+          <AbanqLogo size={48} />
+          <h2 style={{ fontFamily: "var(--display)", fontWeight: 400 }}>Starting Abanq…</h2>
           <p className="muted" style={{ maxWidth: 420 }}>
             {err ? <>Waiting for the API: {err}. Run <span className="kbd">npm run dev</span> in the project root.</> : "Connecting to the agent server and local chain."}
           </p>
@@ -171,7 +171,7 @@ function Shell() {
       <div className="shell">
         <nav className="sidebar" aria-label="Main">
           <div className="logo">
-            <HaloLogo />
+            <AbanqLogo />
           </div>
           {PAGES.filter((p) => !("bottom" in p)).map((p) => (
             <button key={p.id} className={`nav-btn ${page === p.id ? "active" : ""}`} onClick={() => go(p.id)} aria-label={p.label} aria-current={page === p.id ? "page" : undefined}>
@@ -199,7 +199,7 @@ function Shell() {
         <main className="main">
           <header className="appbar">
             <div className="brand">
-              <span className="brand-name">Halo</span>
+              <span className="brand-name">Abanq</span>
               <span className="brand-sub">Wealth Agent Platform</span>
             </div>
             <div className="appbar-center">{isMap && <MapToolbar />}</div>

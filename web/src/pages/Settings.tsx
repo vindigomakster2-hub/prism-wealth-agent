@@ -58,7 +58,7 @@ export function Account() {
           {field("monthlyExpenses", "Monthly expenses (USD)", "number")}
         </div>
         <p className="muted" style={{ fontSize: 12 }}>
-          Income, expenses and dependents feed the emergency-fund check, the debt-to-income factor of your Halo score and the life-cover rule of thumb.
+          Income, expenses and dependents feed the emergency-fund check, the debt-to-income factor of your Abanq score and the life-cover rule of thumb.
           Right now: {s.risk.emergencyMonths.toFixed(1)} months of expenses in cash, score {s.credit.score}.
         </p>
         <div className="row-flex">
@@ -195,7 +195,7 @@ export function Settings() {
                 className="btn sm"
                 onClick={() => {
                   try {
-                    localStorage.removeItem("halo.map.v1");
+                    localStorage.removeItem("abanq.map.v1");
                   } catch {
                     /* storage unavailable */
                   }
@@ -244,7 +244,7 @@ export function Settings() {
           <h3 className="card-title"><Shield size={17} /> Security</h3>
           <ul className="ink2" style={{ fontSize: 13, paddingLeft: 18, margin: "10px 0 0", display: "flex", flexDirection: "column", gap: 6 }}>
             <li>The API answers only to this app on localhost; other websites and foreign Host headers are refused.</li>
-            <li>Bank and broker links are read-only; Halo never stores credentials.</li>
+            <li>Bank and broker links are read-only; Abanq never stores credentials.</li>
             <li>The agent key cannot pay unknown addresses, enforced by the smart-wallet contract.</li>
             <li>Every agent action is simulated, policy-checked and logged in the audit trail.</li>
           </ul>

@@ -122,7 +122,7 @@ export function buildGraph(s: AppState, opts: { sort: SortKey; hidden: CatId[]; 
       leaves.push({
         id: `cover-${c.id}`,
         name: `Liquidation cover #${c.id}`,
-        institution: "Halo wallet",
+        institution: "Abanq wallet",
         cat: "insurance",
         kind: "policy",
         value: c.coverUsd,

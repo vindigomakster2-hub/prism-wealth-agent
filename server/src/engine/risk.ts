@@ -191,7 +191,7 @@ export function unifyHoldings(sources: Source[], chain: OnchainState): { holding
       holdings.push({
         ...h,
         sourceId: "onchain",
-        sourceName: "Halo wallet",
+        sourceName: "Abanq wallet",
         onchain: true,
         group: GROUP_OF[h.assetClass],
         riskLevel: RISK_OF[h.assetClass],
@@ -207,7 +207,7 @@ export function unifyHoldings(sources: Source[], chain: OnchainState): { holding
     liabilities.push({
       id: "oc-loan",
       name: "Hybrid credit line (USDC)",
-      sourceName: "Halo wallet",
+      sourceName: "Abanq wallet",
       balanceUsd: chain.loan.debt,
       aprPct: chain.loan.rateBps / 100,
       monthlyPayment: (chain.loan.debt * chain.loan.rateBps) / 10000 / 12,

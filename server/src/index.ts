@@ -24,10 +24,13 @@ const app = express();
 // The API can move money, so only the local app may call it.
 // Host check blocks DNS-rebinding; the origin allow-list stops other websites in the same browser.
 const LOCAL = /^(localhost|127\.0\.0\.1|\[::1\])(:\d+)?$/i;
-const extraHosts = (process.env.HALO_ALLOWED_HOSTS ?? "").split(",").map((h) => h.trim().toLowerCase()).filter(Boolean);
+// ABANQ_ALLOWED_HOSTS opens the app to other devices (a LAN IP or a tunnel host). An entry starting with "."
+// also matches its subdomains, the same rule Vite uses for allowedHosts.
+const extraHosts = (process.env.ABANQ_ALLOWED_HOSTS ?? "").split(",").map((h) => h.trim().toLowerCase()).filter(Boolean);
+const isExtra = (hostname: string) => extraHosts.some((h) => (h.startsWith(".") ? hostname === h.slice(1) || hostname.endsWith(h) : hostname === h));
 app.use((req, res, next) => {
   const host = String(req.headers.host ?? "").toLowerCase();
-  if (LOCAL.test(host) || extraHosts.includes(host.replace(/:\d+$/, ""))) return next();
+  if (LOCAL.test(host) || isExtra(host.replace(/:\d+$/, ""))) return next();
   res.status(421).json({ error: "Host not allowed" });
 });
 app.use(
@@ -36,7 +39,7 @@ app.use(
       if (!origin) return cb(null, true); // same-origin, curl, server-to-server
       try {
         const u = new URL(origin);
-        cb(null, LOCAL.test(u.host) || extraHosts.includes(u.hostname.toLowerCase()));
+        cb(null, LOCAL.test(u.host) || isExtra(u.hostname.toLowerCase()));
       } catch {
         cb(null, false);
       }
@@ -49,7 +52,7 @@ app.use((req, res, next) => {
   if (req.method !== "GET" && origin) {
     try {
       const u = new URL(origin);
-      if (!LOCAL.test(u.host) && !extraHosts.includes(u.hostname.toLowerCase())) {
+      if (!LOCAL.test(u.host) && !isExtra(u.hostname.toLowerCase())) {
         res.status(403).json({ error: "Cross-origin request refused" });
         return;
       }
@@ -146,9 +149,9 @@ app.get(
   wrap(async (_req, res) => {
     const { chain, risk, credit } = await snapshotState();
     const stamp = new Date().toISOString().replace(/[:.]/g, "-");
-    res.setHeader("Content-Disposition", `attachment; filename="halo-backup-${stamp}.json"`);
+    res.setHeader("Content-Disposition", `attachment; filename="abanq-backup-${stamp}.json"`);
     return {
-      format: "halo-backup",
+      format: "abanq-backup",
       version: 1,
       exportedAt: new Date().toISOString(),
       persona,
@@ -372,7 +375,8 @@ app.use((err: unknown, _req: Request, res: Response, _next: NextFunction) => {
 });
 
 app.listen(PORT, "127.0.0.1", () => {
-  console.log(`[server] Halo API on http://127.0.0.1:${PORT} (LLM: ${LLM_ENABLED ? LLM_MODEL : "offline rules"})`);
+  console.log(`[server] Abanq API on http://127.0.0.1:${PORT} (LLM: ${LLM_ENABLED ? LLM_MODEL : "offline rules"})`);
+  if (extraHosts.length) console.log(`[server] also open to: ${extraHosts.join(", ")} (ABANQ_ALLOWED_HOSTS)`);
 });
 
 (async () => {

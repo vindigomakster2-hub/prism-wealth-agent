@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import {
   ArrowUpDown,
   Bot,
@@ -39,8 +39,10 @@ type Graph = ReturnType<typeof buildGraph>;
 function useSize<T extends HTMLElement>(): [React.RefObject<T | null>, { w: number; h: number }] {
   const ref = useRef<T>(null);
   const [size, setSize] = useState({ w: 0, h: 0 });
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (!ref.current) return;
+    // Measure right away so the first paint already has the map; the observer keeps it in sync after that.
+    setSize({ w: ref.current.clientWidth, h: ref.current.clientHeight });
     const ro = new ResizeObserver(([e]) => setSize({ w: e.contentRect.width, h: e.contentRect.height }));
     ro.observe(ref.current);
     return () => ro.disconnect();
@@ -49,7 +51,7 @@ function useSize<T extends HTMLElement>(): [React.RefObject<T | null>, { w: numb
 }
 
 // Node positions the user dragged, and collapsed categories: a per-viewer convenience kept in the browser.
-const PREFS_KEY = "halo.map.v1";
+const PREFS_KEY = "abanq.map.v1";
 interface MapPrefs {
   offsets: Record<string, { x: number; y: number }>;
   collapsed: CatId[];
@@ -96,7 +98,7 @@ export function MapToolbar() {
     const csv = rows.map((r) => r.map((c) => `"${c.replace(/"/g, '""')}"`).join(",")).join("\n");
     const a = document.createElement("a");
     a.href = URL.createObjectURL(new Blob([csv], { type: "text/csv" }));
-    a.download = `halo-positions-${new Date().toISOString().slice(0, 10)}.csv`;
+    a.download = `abanq-positions-${new Date().toISOString().slice(0, 10)}.csv`;
     a.click();
     URL.revokeObjectURL(a.href);
     setOpen(null);
@@ -728,7 +730,7 @@ function Panel({ g, sel, onPick, onDive, sim, headline }: { g: Graph; sel: Sel; 
     title = l.name;
     subtitle = `${meta.label}${l.onchain ? " · on-chain" : " · off-chain, read-only"}`;
     statusPill = l.missing ? <StatusPill tone="bad">Missing</StatusPill> : <StatusPill tone="good">{l.onchain ? "On-chain" : "Connected"}</StatusPill>;
-    statusText = l.onchain ? <>Read live from the Halo wallet {short(s.chain.wallet.address)}.</> : src ? <>Synced {timeAgo(src.lastSync)} via {src.connectMethod.toLowerCase()}.</> : <>Entered manually.</>;
+    statusText = l.onchain ? <>Read live from the Abanq wallet {short(s.chain.wallet.address)}.</> : src ? <>Synced {timeAgo(src.lastSync)} via {src.connectMethod.toLowerCase()}.</> : <>Entered manually.</>;
     explore = l.onchain ? { label: "Open credit", onClick: () => go("credit") } : { label: "Open accounts", onClick: () => go("accounts") };
     const series = seededTrend(l.id, Math.max(1, Math.abs(l.value) || 1), 28, l.riskLevel === "high" ? 0.06 : 0.015);
     metric = {
@@ -760,7 +762,7 @@ function Panel({ g, sel, onPick, onDive, sim, headline }: { g: Graph; sel: Sel; 
               <Tile key="4" icon={<Zap size={20} />} value={l.onchain ? "Agent" : "You"} label="Who can act" />,
             ];
     quick = quickActionsFor(l, s);
-    if (!l.onchain) note = "Off-chain and read-only: Halo analyses this position and suggests steps, and you carry them out.";
+    if (!l.onchain) note = "Off-chain and read-only: Abanq analyses this position and suggests steps, and you carry them out.";
   }
 
   return (

@@ -1,5 +1,5 @@
 {
-  "name": "@halo/server",
+  "name": "@abanq/server",
   "private": true,
   "type": "module",
   "scripts": {

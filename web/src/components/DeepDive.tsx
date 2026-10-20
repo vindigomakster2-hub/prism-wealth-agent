@@ -336,7 +336,7 @@ export function DeepDive({
       <>
         <div className="eyebrow" style={{ display: "flex", gap: 8, alignItems: "center" }}><meta.icon size={15} color={meta.color} /> {leaf.institution} · {meta.label}</div>
         <h2 className="panel-title" style={{ marginTop: 4 }}>{leaf.name}</h2>
-        <div className="panel-sub">{leaf.onchain ? "On-chain: the agent can act on it within your mandate" : "Off-chain and read-only: Halo advises, you act"}</div>
+        <div className="panel-sub">{leaf.onchain ? "On-chain: the agent can act on it within your mandate" : "Off-chain and read-only: Abanq advises, you act"}</div>
       </>
     );
     content = (

@@ -8,11 +8,9 @@ import {
   House,
   Inbox,
   Lightbulb,
-  MessageCircle,
   Percent,
   RefreshCw,
   ScanLine,
-  Smartphone,
   Sparkles,
   Upload,
   X,
@@ -114,10 +112,7 @@ export function CashFlow() {
         </div>
       </div>
 
-      <div className="grid g-main">
-        <ReviewInbox c={c} onAnswer={(id, cat) => after(api.answer(id, cat).then((r) => toast("good", r.text)))} label={label} />
-        <TelegramCard c={c} onAnswer={(id, cat) => after(api.answer(id, cat))} />
-      </div>
+      <ReviewInbox c={c} onAnswer={(id, cat) => after(api.answer(id, cat).then((r) => toast("good", r.text)))} label={label} />
 
       <div className="grid g-main">
         <div className="card">
@@ -239,7 +234,7 @@ function ReviewInbox({ c, onAnswer, label }: { c: CashState; onAnswer: (id: stri
         <span className="pill">{c.review.length} open</span>
       </div>
       <div className="stack-sm">
-        {c.review.length === 0 && <div className="empty"><CircleCheck size={16} /> All clear. New unclear transactions will appear here and in Telegram.</div>}
+        {c.review.length === 0 && <div className="empty"><CircleCheck size={16} /> All clear. New unclear transactions will appear here.</div>}
         {c.review.slice(0, 6).map((t) => (
           <div key={t.id} className="analysis-item" style={{ marginBottom: 0 }}>
             <div className="between">
@@ -261,48 +256,6 @@ function ReviewInbox({ c, onAnswer, label }: { c: CashState; onAnswer: (id: stri
           </div>
         ))}
       </div>
-    </div>
-  );
-}
-
-// ======================================================================= telegram
-
-function TelegramCard({ c, onAnswer }: { c: CashState; onAnswer: (id: string, cat: string) => void }) {
-  const t = c.telegram;
-  return (
-    <div className="card">
-      <div className="card-head">
-        <div>
-          <h3 className="card-title"><MessageCircle size={18} /> Telegram</h3>
-          <div className="card-sub">The agent asks where you already are</div>
-        </div>
-        <StatusPill tone={t.linked ? "good" : "neutral"}>{t.linked ? `Linked${t.username ? ` · @${t.username}` : ""}` : "Not linked"}</StatusPill>
-      </div>
-      {t.lastError && <p style={{ fontSize: 12, color: "#ffbcbc" }}>Last error: {t.lastError}</p>}
-      <div className="phone">
-        <div className="phone-head"><Smartphone size={14} /> Halo bot {t.linked ? "" : "· preview"}</div>
-        {t.outbox.length === 0 && <div className="muted" style={{ fontSize: 12, padding: 10 }}>No messages yet</div>}
-        {t.outbox.slice(0, 3).map((msg) => (
-          <div key={msg.at + msg.text} className="tg-msg">
-            <div>{msg.text}</div>
-            {msg.done ? (
-              <div className="tg-done">✅ {msg.done}</div>
-            ) : (
-              <div className="tg-buttons">
-                {msg.buttons.map((b) => {
-                  const [, id, cat] = b.data.split("|");
-                  return (
-                    <button key={b.data} onClick={() => onAnswer(id, cat)}>
-                      {b.label}
-                    </button>
-                  );
-                })}
-              </div>
-            )}
-          </div>
-        ))}
-      </div>
-      <div className="muted" style={{ fontSize: 12, marginTop: 8 }}>{t.sent} sent · {t.answered} answered from Telegram</div>
     </div>
   );
 }

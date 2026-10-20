@@ -25,7 +25,7 @@ export function Credit() {
   };
   const rate = att.active ? loan.rateBps / 100 : 9;
   const cmp = credit.comparison;
-  const sliderMax = Math.max(500, Math.floor(Math.max(available, cmp.halo.available) / 100) * 100);
+  const sliderMax = Math.max(500, Math.floor(Math.max(available, cmp.hybrid.available) / 100) * 100);
 
   const act = async (fn: () => Promise<unknown>) => {
     setBusy(true);
@@ -37,7 +37,7 @@ export function Credit() {
     <div className="stack">
       <div className="grid g-3">
         <div className="card">
-          <h3 className="card-title"><BadgeCheck size={18} color="#e3f56b" /> Halo score</h3>
+          <h3 className="card-title"><BadgeCheck size={18} color="#e3f56b" /> Abanq score</h3>
           <div className="card-sub">From {usdCompact(credit.totalVerified)} of verified off-chain assets</div>
           <div style={{ marginTop: 16 }}>
             <Gauge
@@ -73,17 +73,17 @@ export function Credit() {
         </div>
 
         <div className="card">
-          <h3 className="card-title">Standard DeFi vs Halo</h3>
+          <h3 className="card-title">Standard DeFi vs Abanq</h3>
           <div className="card-sub">Same {usd(coll)} of ETH collateral, same pool</div>
           <table className="t" style={{ marginTop: 14 }}>
             <thead>
-              <tr><th /><th className="r">Standard</th><th className="r" style={{ color: "#e3f56b" }}>Halo · T{credit.tier}</th></tr>
+              <tr><th /><th className="r">Standard</th><th className="r" style={{ color: "#e3f56b" }}>Abanq · T{credit.tier}</th></tr>
             </thead>
             <tbody>
-              <tr><td>Max borrow</td><td className="r">{usd(cmp.standard.maxBorrow)}</td><td className="r"><b>{usd(cmp.halo.maxBorrow)}</b></td></tr>
-              <tr><td>Effective LTV</td><td className="r">{cmp.standard.ltvPct.toFixed(0)}%</td><td className="r"><b>{cmp.halo.ltvPct.toFixed(0)}%</b></td></tr>
-              <tr><td>APR</td><td className="r">{cmp.standard.aprPct.toFixed(1)}%</td><td className="r"><b>{cmp.halo.aprPct.toFixed(1)}%</b></td></tr>
-              <tr><td>Available now</td><td className="r">{usd(cmp.standard.available)}</td><td className="r"><b>{usd(cmp.halo.available)}</b></td></tr>
+              <tr><td>Max borrow</td><td className="r">{usd(cmp.standard.maxBorrow)}</td><td className="r"><b>{usd(cmp.hybrid.maxBorrow)}</b></td></tr>
+              <tr><td>Effective LTV</td><td className="r">{cmp.standard.ltvPct.toFixed(0)}%</td><td className="r"><b>{cmp.hybrid.ltvPct.toFixed(0)}%</b></td></tr>
+              <tr><td>APR</td><td className="r">{cmp.standard.aprPct.toFixed(1)}%</td><td className="r"><b>{cmp.hybrid.aprPct.toFixed(1)}%</b></td></tr>
+              <tr><td>Available now</td><td className="r">{usd(cmp.standard.available)}</td><td className="r"><b>{usd(cmp.hybrid.available)}</b></td></tr>
             </tbody>
           </table>
           <div className="banner" style={{ marginTop: 16, marginBottom: 0, background: "rgba(227,245,107,.08)", borderColor: "rgba(227,245,107,.3)", color: "#eef7b4" }}>

@@ -13,7 +13,7 @@ import { Contract, ContractFactory, MaxUint256, Wallet, type InterfaceAbi } from
 import { addr, c, ensureWorld, errorReason, f6, iface, signers, usd6 } from "../src/chain.js";
 import { ARTIFACTS_DIR } from "../src/config.js";
 
-const API = process.env.HALO_API ?? "http://127.0.0.1:8787";
+const API = process.env.ABANQ_API ?? "http://127.0.0.1:8787";
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type J = any;
@@ -86,7 +86,7 @@ const enc = (i: typeof iface.erc20, fn: string, args: unknown[]) => i.encodeFunc
 async function signAttestation(signer: Wallet, subject: string, nonce: bigint, expiresAt: number) {
   const value = { subject, tier: 2, score: 785, creditLineUsd6: usd6(15000), expiresAt, sourcesRoot: "0x" + "ab".repeat(32), nonce };
   const signature = await signer.signTypedData(
-    { name: "HaloCreditRegistry", version: "1", chainId: 31337, verifyingContract: addr.registry },
+    { name: "AbanqCreditRegistry", version: "1", chainId: 31337, verifyingContract: addr.registry },
     {
       Attestation: [
         { name: "subject", type: "address" },
@@ -104,7 +104,7 @@ async function signAttestation(signer: Wallet, subject: string, nonce: bigint, e
 }
 
 async function main() {
-  console.log(`Halo e2e against ${API}`);
+  console.log(`Abanq e2e against ${API}`);
   const health = await get("/api/health").catch(() => null);
   if (!health?.ready) {
     console.error("Server not ready. Start the stack first: npm run dev");
@@ -689,7 +689,7 @@ async function main() {
     const res = await fetch(`${API}/api/export`);
     const body = await res.json();
     expect(res.ok && (res.headers.get("content-disposition") ?? "").includes("attachment"), "not served as a download");
-    expect(body.format === "halo-backup" && body.sources.length === 5 && body.onchain.addresses.wallet, "backup incomplete");
+    expect(body.format === "abanq-backup" && body.sources.length === 5 && body.onchain.addresses.wallet, "backup incomplete");
     expect(Array.isArray(body.auditTrail) && body.auditTrail.length > 0 && body.auditTrail[0].checks, "audit trail missing");
   });
   await test("requests from a foreign website are refused", async () => {

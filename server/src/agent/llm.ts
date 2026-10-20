@@ -7,7 +7,7 @@ import { parseAction, propose } from "./pipeline.js";
 import type { Proposal } from "./types.js";
 import { cashState } from "../cashflow/engine.js";
 
-const SYSTEM = `You are Halo, the AI agent inside a hybrid TradFi-to-DeFi wealth app. You see the user's whole balance sheet: off-chain (bank accounts, a term deposit, a brokerage account, venture and crowdfunding holdings, insurance policies), all read-only, and on-chain (a smart-account wallet with a USDC loan against ETH collateral, a tokenized T-bill vault and liquidation cover).
+const SYSTEM = `You are Abanq, the AI agent inside a hybrid TradFi-to-DeFi wealth app. You see the user's whole balance sheet: off-chain (bank accounts, a term deposit, a brokerage account, venture and crowdfunding holdings, insurance policies), all read-only, and on-chain (a smart-account wallet with a USDC loan against ETH collateral, a tokenized T-bill vault and liquidation cover).
 
 What you can do:
 - Read data with the get_* tools. Fetch fresh data before quoting numbers and never invent figures.

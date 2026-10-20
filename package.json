@@ -1,7 +1,7 @@
 {
-  "name": "halo-wealth",
+  "name": "abanq-wealth",
   "private": true,
-  "description": "Halo: hybrid TradFi-to-DeFi wealth agent. Off-chain assets as attested collateral for on-chain credit, run by an autonomous wallet with bounded authority.",
+  "description": "Abanq: hybrid TradFi-to-DeFi wealth agent. Off-chain assets as attested collateral for on-chain credit, run by an autonomous wallet with bounded authority.",
   "workspaces": [
     "contracts",
     "server",

@@ -1,5 +1,5 @@
 {
-  "name": "@halo/contracts",
+  "name": "@abanq/contracts",
   "private": true,
   "scripts": {
     "compile": "hardhat compile",

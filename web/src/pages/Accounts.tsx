@@ -43,7 +43,7 @@ export function Accounts() {
       <div className="grid g-3">
         <div className="card tight">
           <div className="row-flex"><Lock size={18} color="#e3f56b" /><b>Read-only by design</b></div>
-          <p className="muted" style={{ margin: "8px 0 0", fontSize: 13 }}>Halo never sees bank passwords. Each link is a revocable open-banking or broker API consent with balance and transaction scopes only.</p>
+          <p className="muted" style={{ margin: "8px 0 0", fontSize: 13 }}>Abanq never sees bank passwords. Each link is a revocable open-banking or broker API consent with balance and transaction scopes only.</p>
         </div>
         <div className="card tight">
           <div className="row-flex"><ShieldCheck size={18} color="#e3f56b" /><b>Verifiable, not just imported</b></div>
@@ -147,7 +147,7 @@ export function Accounts() {
                 <Wallet size={24} color="#1d1f0a" />
               </div>
               <div>
-                <h3 className="card-title">Halo smart wallet</h3>
+                <h3 className="card-title">Abanq smart wallet</h3>
                 <div className="card-sub mono">{c.wallet.address}</div>
               </div>
             </div>

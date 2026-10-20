@@ -28,7 +28,7 @@ export const GROQ_API_KEY = process.env.GROQ_API_KEY ?? "";
 export const LLM_MODEL = process.env.GROQ_MODEL ?? "openai/gpt-oss-120b";
 /** Groq lists no production model with image input; set this to one that accepts images to enable receipt photos. */
 export const VISION_MODEL = process.env.GROQ_VISION_MODEL ?? "";
-export const LLM_ENABLED = process.env.HALO_LLM !== "off" && Boolean(GROQ_API_KEY);
+export const LLM_ENABLED = process.env.ABANQ_LLM !== "off" && Boolean(GROQ_API_KEY);
 
 export const TICK_MS = 4000;
 export const ETH_START_PRICE = 3400;

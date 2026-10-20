@@ -1,8 +1,8 @@
-# Halo: hybrid TradFi → DeFi wealth agent
+# Abanq: hybrid TradFi → DeFi wealth agent
 
 **Track:** Topic F, Agent Wallet. An AI wallet agent that manages assets, executes on-chain transactions and controls risk on its own.
 
-Halo pulls in the user's **whole balance sheet**: bank accounts and deposits, brokerage positions, venture and crowdfunding stakes, insurance, debts, real estate and an on-chain wallet. It also learns their **cash flow** from bank sync, statements and receipts. It scores risk and creditworthiness across all of it, turns verified **off-chain wealth into better on-chain credit terms** ("Proof of Wealth"), and runs the on-chain side (borrowing, repaying, yield, insurance, liquidation defence) inside limits that a smart contract enforces.
+Abanq pulls in the user's **whole balance sheet**: bank accounts and deposits, brokerage positions, venture and crowdfunding stakes, insurance, debts, real estate and an on-chain wallet. It also learns their **cash flow** from bank sync, statements and receipts. It scores risk and creditworthiness across all of it, turns verified **off-chain wealth into better on-chain credit terms** ("Proof of Wealth"), and runs the on-chain side (borrowing, repaying, yield, insurance, liquidation defence) inside limits that a smart contract enforces.
 
 > **Pitch:** the AI sees everything, acts on-chain, and its worst case is capped by a contract. The cap is a number: **$0** to unknown addresses.
 
@@ -48,10 +48,32 @@ cp .env.example .env
 | `GROQ_VISION_MODEL` | A Groq model that accepts images, for receipt photos. Empty = photo scanning off (the sample receipt and manual entry still work) |
 | `TELEGRAM_BOT_TOKEN` (`TELEGRAM_CHAT_ID` optional) | The agent asks about unclear transactions and sends alerts in Telegram. See [Telegram bot](#telegram-bot) |
 | `GOCARDLESS_SECRET_ID`, `GOCARDLESS_SECRET_KEY` | Real EU bank connections via GoCardless Bank Account Data (PSD2 AIS) |
-| `HALO_ALLOWED_HOSTS` | Extra host names allowed to reach the API (default: localhost only) |
-| `HALO_LLM=off` | Forces the offline agent even when a key is set |
+| `ABANQ_ALLOWED_HOSTS` | Opens the app to other devices: host names or IPs, comma-separated; `.example.com` also matches subdomains. See [Open it from another laptop](#open-it-from-another-laptop) |
+| `ABANQ_LLM=off` | Forces the offline agent even when a key is set |
 
 The Groq, Telegram and GoCardless code paths typecheck, but they have **not been run against the live services** in this repo, because no keys were available. Everything else is covered by the e2e suite.
+
+### Open it from another laptop
+
+Everything keeps running on your computer; the other person only needs a browser. By default Abanq answers only on this computer. `ABANQ_ALLOWED_HOSTS` opens the web app (port 5173) to the names you list. The API and the chain stay local-only, because the web server forwards API calls to them.
+
+**Same Wi-Fi.** Find your IP (`ipconfig` → Wireless LAN → IPv4 Address, e.g. `192.168.1.139`), put it in `.env` and restart `npm run dev`:
+
+```
+ABANQ_ALLOWED_HOSTS=192.168.1.139
+```
+
+The other laptop opens `http://192.168.1.139:5173`. If it can't connect, allow Node.js when Windows Firewall asks. Some guest or venue Wi-Fi networks isolate devices from each other; use a tunnel then.
+
+**Different network (internet).** Use a Cloudflare quick tunnel; no account is needed. Install `cloudflared` once (`winget install --id Cloudflare.cloudflared`), set this in `.env` and restart `npm run dev`:
+
+```
+ABANQ_ALLOWED_HOSTS=.trycloudflare.com
+```
+
+Then, in another terminal, run `cloudflared tunnel --url http://localhost:5173` and send the printed `https://….trycloudflare.com` link. The link changes every time you start the tunnel; Ctrl+C closes it.
+
+Both can be on at once: `ABANQ_ALLOWED_HOSTS=192.168.1.139,.trycloudflare.com`. There is no login, so anyone with the link controls the demo, including chat that spends your Groq quota. Share the link only with people you trust, and stop the tunnel when you're done. Remove the line to go back to local-only.
 
 ### Telegram bot
 
@@ -60,12 +82,12 @@ The bot asks you about transactions the agent can't classify (one tap answers, a
 1. In Telegram, open **@BotFather**, send `/newbot`, pick a name and a username ending in `bot`. BotFather replies with a token like `123456789:AA…`.
 2. Put it in `.env`: `TELEGRAM_BOT_TOKEN=123456789:AA…`
 3. Restart `npm run dev`. The server log prints `[telegram] bot @your_bot ready: send /start to link your chat`.
-4. Open your bot in Telegram and send `/start`. It answers "Halo is linked ✅". That chat is now the owner chat; **no other chat can answer questions or re-link the bot**.
+4. Open your bot in Telegram and send `/start`. It answers "Abanq is linked ✅". That chat is now the owner chat; **no other chat can answer questions or re-link the bot**.
 5. In the app, **Cash flow → Sync now** produces unclear transactions; the questions arrive in Telegram with answer buttons. Answering there updates the app.
 
 Optional: set `TELEGRAM_CHAT_ID` to pre-link a chat (find your ID by sending `/start`, then reading `https://api.telegram.org/bot<TOKEN>/getUpdates`).
 
-In **Settings → Notifications** you can switch Telegram questions and alerts on or off separately. Without a token, the same questions still appear inside the app, and the Cash flow page shows the bot as "Not linked".
+In **Settings → Notifications** you can switch Telegram questions and alerts on or off separately. **Settings → Integrations** shows whether the bot is linked. Without a token, the same questions still appear inside the app (Cash flow → Agent questions).
 
 ---
 
@@ -114,7 +136,7 @@ In **Settings → Notifications** you can switch Telegram questions and alerts o
 
 ### Data access, following the research note
 
-| Source | How Halo gets it | Status |
+| Source | How Abanq gets it | Status |
 |---|---|---|
 | Bank accounts and transactions | PSD2 AIS through an aggregator (GoCardless Bank Account Data); never credentials | Connector implemented (env-gated); demo uses a simulated feed |
 | Bank statements | CSV with profiles (T-Bank, Sber, Fio) plus header auto-detection and manual column mapping; Windows-1251 fallback | ✅ tested |
@@ -125,9 +147,9 @@ In **Settings → Notifications** you can switch Telegram questions and alerts o
 
 ---
 
-## Faults in the original idea, and how Halo fixes them
+## Faults in the original idea, and how Abanq fixes them
 
-| Original Variant A | Problem | Halo's fix |
+| Original Variant A | Problem | Abanq's fix |
 |---|---|---|
 | Off-chain assets as "reputational collateral" | A contract can't seize a bank deposit | Hybrid collateral: the credit line counts only up to 50% of on-chain collateral |
 | One snapshot of wealth | The user can withdraw it the next day | Attestations expire after 30 days, and the agent re-verifies |

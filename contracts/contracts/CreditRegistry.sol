@@ -46,7 +46,7 @@ contract CreditRegistry {
         DOMAIN_SEPARATOR = keccak256(
             abi.encode(
                 keccak256("EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)"),
-                keccak256(bytes("HaloCreditRegistry")),
+                keccak256(bytes("AbanqCreditRegistry")),
                 keccak256(bytes("1")),
                 block.chainid,
                 address(this)

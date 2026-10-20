@@ -91,7 +91,7 @@ async function handle(u: Update) {
   if (u.message?.text?.startsWith("/start")) {
     if (tg.chatId && String(u.message.chat.id) !== tg.chatId) return;
     tg.chatId = String(u.message.chat.id);
-    await call("sendMessage", { chat_id: tg.chatId, text: "Halo is linked ✅ I'll ask here when a transaction is unclear. Tap an answer and I'll remember it for that merchant." });
+    await call("sendMessage", { chat_id: tg.chatId, text: "Abanq is linked ✅ I'll ask here when a transaction is unclear. Tap an answer and I'll remember it for that merchant." });
     await onStart?.();
     return;
   }

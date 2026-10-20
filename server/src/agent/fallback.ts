@@ -52,7 +52,7 @@ export async function chatWithRules(text: string): Promise<{ text: string; propo
     const lines = [
       `You can raise **${fmt.usd(amount)}** without selling anything:`,
       `- Standard DeFi terms: ${fmt.usd(c.standard.available)} available at ${c.standard.aprPct}% APR`,
-      `- With Proof of Wealth (Tier ${credit.tier}): ${fmt.usd(c.halo.available)} available at ${c.halo.aprPct}% APR`,
+      `- With Proof of Wealth (Tier ${credit.tier}): ${fmt.usd(c.hybrid.available)} available at ${c.hybrid.aprPct}% APR`,
       `- Breaking the Meridian term deposit early would forfeit its accrued 4.0% interest.`,
     ];
     if (!chain.attestation.active && credit.eligible) {
@@ -81,7 +81,7 @@ export async function chatWithRules(text: string): Promise<{ text: string; propo
 
   if (has(t, /(proof|attest|score|rating|tier|рейтинг|скор|доказ|кредитн)/)) {
     const lines = [
-      `**Halo score ${credit.score}, Tier ${credit.tier}.** ${fmt.usd(credit.totalPledgeable)} of verified assets after haircuts gives a ${fmt.usd(credit.creditLine)} credit line at ${(credit.rateBps / 100).toFixed(1)}% APR (standard: 9.0%).`,
+      `**Abanq score ${credit.score}, Tier ${credit.tier}.** ${fmt.usd(credit.totalPledgeable)} of verified assets after haircuts gives a ${fmt.usd(credit.creditLine)} credit line at ${(credit.rateBps / 100).toFixed(1)}% APR (standard: 9.0%).`,
       ...credit.factors.map((f) => `- ${f.label}: ${Math.round(f.score)}/100 (${f.detail})`),
     ];
     if (credit.nextTier) lines.push(`Tier ${credit.nextTier.tier} needs ${credit.nextTier.pointsNeeded} more points. Diversification is the biggest lever.`);

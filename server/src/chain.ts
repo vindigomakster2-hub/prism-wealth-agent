@@ -15,7 +15,7 @@ import {
 } from "ethers";
 import { ARTIFACTS_DIR, DEPLOYMENTS_FILE, ETH_START_PRICE, ROLE_INDEX, RPC_URL, TEST_MNEMONIC } from "./config.js";
 
-export const provider = new JsonRpcProvider(RPC_URL, { chainId: 31337, name: "halo-local" }, {
+export const provider = new JsonRpcProvider(RPC_URL, { chainId: 31337, name: "abanq-local" }, {
   staticNetwork: true,
   cacheTimeout: -1,
 });

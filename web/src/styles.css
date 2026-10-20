@@ -1,4 +1,4 @@
-/* Halo: graph-explorer layout after the reference, in Halo's warm mauve / lime / cream / orange palette. */
+/* Abanq: graph-explorer layout after the reference, in Abanq's warm mauve / lime / cream / orange palette. */
 :root {
   --bg-0: #131114;
   --panel: #1a171c;
@@ -277,13 +277,6 @@ a { color: var(--lime); }
 .chip-btn.right { margin-left: auto; }
 
 /* ------------------------------------------------------------------ telegram mirror */
-.phone { border-radius: 18px; background: #0e1621; border: 1px solid rgba(120, 160, 210, 0.25); padding: 10px; display: flex; flex-direction: column; gap: 8px; max-height: 330px; overflow-y: auto; }
-.phone-head { display: flex; align-items: center; gap: 6px; font-size: 12px; font-weight: 700; color: #8fb3d9; padding: 2px 4px 6px; border-bottom: 1px solid rgba(120, 160, 210, 0.15); }
-.tg-msg { align-self: flex-start; max-width: 94%; background: #182533; color: #e8eef5; border-radius: 12px 12px 12px 4px; padding: 9px 11px; font-size: 12.5px; }
-.tg-buttons { display: grid; grid-template-columns: 1fr 1fr; gap: 5px; margin-top: 8px; }
-.tg-buttons button { background: rgba(110, 160, 220, 0.18); border: none; color: #cfe3fa; border-radius: 8px; padding: 6px 8px; font-size: 12px; font-weight: 600; cursor: pointer; }
-.tg-buttons button:hover { background: rgba(110, 160, 220, 0.3); }
-.tg-done { margin-top: 6px; color: #a6e8c6; font-size: 12px; }
 .orb-toggle { position: absolute; transform: translateX(-50%); }
 
 /* ------------------------------------------------------------------ stress builder */
